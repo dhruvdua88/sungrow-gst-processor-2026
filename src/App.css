@@ -1,0 +1,311 @@
+:root {
+  --blue: #1f4e78;
+  --blue-dark: #173a59;
+  --blue-light: #eaf2f8;
+  --warn: #fce4d6;
+  --ink: #1a2433;
+  --muted: #44546a;
+  --line: #d9e2f3;
+  --bg: #f4f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header — same #1F4E78 banner as the desktop tool */
+.header {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--blue-dark) 100%);
+  color: #fff;
+  padding: 26px 0 22px;
+  box-shadow: 0 2px 12px rgba(31, 78, 120, 0.35);
+}
+
+.header-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 18px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.brand-mark {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.header-title {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #d9e7f5;
+}
+
+.header-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #b9cfe4;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 1px 4px rgba(31, 78, 120, 0.08);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* Form rows — mirror the PathRow layout: label | entry | browse */
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.path-label {
+  width: 230px;
+  flex-shrink: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.req {
+  color: #c0392b;
+  margin-left: 3px;
+}
+
+.path-entry {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfdff;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: #8294ab;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s;
+}
+
+.path-entry:hover {
+  border-color: var(--blue);
+}
+
+.path-entry.filled {
+  color: var(--ink);
+  background: var(--blue-light);
+  border-color: #b7cce0;
+}
+
+.browse-btn {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.browse-btn:hover {
+  background: var(--blue-dark);
+}
+
+.clear-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  width: 30px;
+  height: 34px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.clear-btn:hover {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+
+.fy-label {
+  width: 60px;
+  text-align: right;
+  font-size: 13.5px;
+  margin-left: 8px;
+}
+
+.meta-input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fbfdff;
+}
+
+.meta-input:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: -1px;
+}
+
+.note {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 10px 0 14px;
+  line-height: 1.5;
+}
+
+.run-btn {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  height: 44px;
+  padding: 0 26px;
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.run-btn:hover:not(:disabled) {
+  background: var(--blue-dark);
+  transform: translateY(-1px);
+}
+
+.run-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+/* Run summary cards */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.stat {
+  background: var(--blue-light);
+  border-radius: 9px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat.warn {
+  background: var(--warn);
+}
+
+.stat-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.stat-value {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* Status log — replicates the CTkTextbox */
+.log {
+  margin: 0;
+  background: #0f1c2b;
+  color: #cfe3f5;
+  border-radius: 9px;
+  padding: 14px 16px;
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  min-height: 160px;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.footer {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 14px;
+}
+
+@media (max-width: 720px) {
+  .path-row {
+    flex-wrap: wrap;
+  }
+  .path-label {
+    width: 100%;
+  }
+}
