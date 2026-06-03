@@ -1,9 +1,78 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { buildWorkbook } from "./engine/index.js";
 import "./App.css";
 
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function fmtCell(v) {
+  if (typeof v === "number") return fmt2(v);
+  return v === null || v === undefined ? "" : String(v);
+}
+
+// Click a header to sort; numeric-aware; second click flips direction.
+function SortableTable({ title, headers, rows, empty, warnRows }) {
+  const [sortCol, setSortCol] = useState(null);
+  const [sortDir, setSortDir] = useState(1);
+
+  const sorted = useMemo(() => {
+    if (sortCol === null) return rows;
+    return [...rows].sort((a, b) => {
+      const x = a[sortCol];
+      const y = b[sortCol];
+      const nx = typeof x === "number" ? x : parseFloat(String(x).replace(/,/g, ""));
+      const ny = typeof y === "number" ? y : parseFloat(String(y).replace(/,/g, ""));
+      if (!Number.isNaN(nx) && !Number.isNaN(ny)) return (nx - ny) * sortDir;
+      return String(x ?? "").localeCompare(String(y ?? "")) * sortDir;
+    });
+  }, [rows, sortCol, sortDir]);
+
+  const onSort = (idx) => {
+    if (sortCol === idx) setSortDir((d) => -d);
+    else {
+      setSortCol(idx);
+      setSortDir(1);
+    }
+  };
+
+  return (
+    <div className="preview-block">
+      <h3 className={warnRows && rows.length ? "block-title warn-title" : "block-title"}>
+        {title}
+        <span className="row-count">{rows.length ? ` — ${rows.length} row${rows.length > 1 ? "s" : ""}` : ""}</span>
+      </h3>
+      {rows.length === 0 ? (
+        <p className="empty-msg">{empty}</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="preview-table">
+            <thead>
+              <tr>
+                {headers.map((h, i) => (
+                  <th key={h} onClick={() => onSort(i)} title="Click to sort">
+                    {h}
+                    {sortCol === i ? (sortDir === 1 ? " ▲" : " ▼") : ""}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((row, ri) => (
+                <tr key={ri} className={warnRows ? "warn-row" : ""}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className={typeof cell === "number" ? "num" : ""}>
+                      {fmtCell(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function FileRow({ label, required, accept, multiple, files, onFiles, hint, link }) {
   const inputRef = useRef(null);
@@ -56,6 +125,20 @@ function FileRow({ label, required, accept, multiple, files, onFiles, hint, link
       />
     </div>
   );
+}
+
+function downloadWorkbook(res) {
+  const blob = new Blob([res.buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = res.output;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function App() {
@@ -131,17 +214,7 @@ export default function App() {
       });
 
       // Download the focused workbook
-      const blob = new Blob([res.buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = res.output;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      downloadWorkbook(res);
 
       // Same success log lines as the desktop tool
       appendLog(`Created: ${res.output}`);
@@ -289,45 +362,24 @@ export default function App() {
 
         {result && (
           <section className="card stats-card">
-            <h2>Run Summary</h2>
-            <div className="stats-grid">
-              <div className="stat">
-                <span className="stat-label">Sanitized ITC Tax</span>
-                <span className="stat-value">₹{fmt2(result.books_total_tax)}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">2B Available Tax</span>
-                <span className="stat-value">₹{fmt2(result.r2b_total_tax)}</span>
-              </div>
-              <div className={`stat ${result.ledger_itc_rec_difference ? "warn" : ""}`}>
-                <span className="stat-label">ITC − REC Ledger Diff</span>
-                <span className="stat-value">₹{fmt2(result.ledger_itc_rec_difference)}</span>
-              </div>
-              <div className={`stat ${result.correction_count ? "warn" : ""}`}>
-                <span className="stat-label">Correction Flags</span>
-                <span className="stat-value">{result.correction_count}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">Sanitized ITC Rows</span>
-                <span className="stat-value">{result.invoice_count}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">2B Rows</span>
-                <span className="stat-value">{result.r2b_count}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">BOE Parsed / Matched</span>
-                <span className="stat-value">
-                  {result.boe_count} / {result.boe_matched_count}
-                </span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">ISD Bills / Tax</span>
-                <span className="stat-value">
-                  {result.isd_bill_count} / ₹{fmt2(result.isd_bill_tax)}
-                </span>
-              </div>
+            <div className="preview-head">
+              <h2>Dashboard Preview</h2>
+              <button className="dl-again-btn" onClick={() => downloadWorkbook(result)}>
+                ⬇ Download workbook again
+              </button>
             </div>
+            <div className="stats-grid">
+              {result.preview.cards.map((c) => (
+                <div key={c.label} className={`stat ${c.warn ? "warn" : ""}`}>
+                  <span className="stat-label">{c.label}</span>
+                  <span className="stat-value">{c.count ? c.value : `₹${fmt2(c.value)}`}</span>
+                </div>
+              ))}
+            </div>
+            <SortableTable {...result.preview.ledgerMismatches} warnRows />
+            <SortableTable {...result.preview.unresolvedB2b} warnRows />
+            <SortableTable {...result.preview.corrections} warnRows />
+            <SortableTable {...result.preview.ledgerSummary} />
           </section>
         )}
 

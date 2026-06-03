@@ -1,6 +1,6 @@
 // Main entry point — mirrors build_workbook(), browser-native:
 // File inputs in, styled XLSX ArrayBuffer + run summary out.
-import { asFloat, round2 } from "./helpers.js";
+import { asFloat, round2, fmtDate } from "./helpers.js";
 import { workbookFromArrayBuffer, readGlRows } from "./readers.js";
 import { loadR2bDocs } from "./r2b.js";
 import { aggregateSourceRows } from "./sources.js";
@@ -99,12 +99,104 @@ export async function buildWorkbook(inputs) {
     twoBDetailRows: build2bBooksDetail(nonIsd, r2bDocs),
   });
 
+  // ---- In-browser preview data (mirrors the Dashboard sheet blocks) ----
+  const booksTax = round2(invoices.reduce((s, i) => s + i.total_tax, 0));
+  const booksNonIsd = round2(nonIsd.reduce((s, i) => s + i.total_tax, 0));
+  const r2bTaxAvail = round2(r2bDocs.filter((d) => d.itc_available === "Y").reduce((s, d) => s + d.total_tax, 0));
+  const ledgerRec = round2(ledgerSummary.reduce((s, r) => s + r[13], 0));
+  const ledgerRcm = round2(ledgerSummary.reduce((s, r) => s + r[17], 0));
+  const corrAmt = round2(corrections.reduce((s, r) => s + asFloat(r[9]), 0));
+  const unresolvedB2b = invoices.filter((i) => i.itc_type === "B2B" && i.gstin_match === "Unresolved");
+  const rcmUr = invoices.filter((i) => i.itc_type === "RCM-UR");
+  const isdEligibleDist = isdDist.filter((d) => d.eligibility === "Eligible");
+  const isdEligibleTax = round2(isdEligibleDist.reduce((s, d) => s + d.total_tax, 0));
+  const isdBillTax = round2(isdDocs.reduce((s, d) => s + d.total_tax, 0));
+  const isdInItc = new Set(isdDocs.filter((d) => d.gstin_in_itc).map((d) => d.gstin));
+  const isdAbsent = new Set(isdDocs.filter((d) => !d.gstin_in_itc).map((d) => d.gstin));
+
+  const countCard = (label, value) => ({ label, value, count: true });
+  const amtCard = (label, value) => ({ label, value, count: false });
+  const previewCards = [
+    amtCard("Sanitized ITC Tax", booksTax),
+    amtCard("GST REC Ledger Movement", ledgerRec),
+    amtCard("ITC - Ledger Difference", round2(booksTax - ledgerRec)),
+    amtCard("2B Available Tax", r2bTaxAvail),
+    amtCard("Books Non-ISD - 2B Diff", round2(booksNonIsd - r2bTaxAvail)),
+    amtCard("RCM Payable Movement", ledgerRcm),
+    countCard("Immediate Correction Flags", corrections.length),
+    amtCard("Correction Amount", corrAmt),
+    countCard("Unresolved B2B Rows", unresolvedB2b.length),
+    amtCard("Unresolved B2B Tax", round2(unresolvedB2b.reduce((s, i) => s + i.total_tax, 0))),
+    countCard("RCM-UR Rows", rcmUr.length),
+    amtCard("RCM-UR Tax", round2(rcmUr.reduce((s, i) => s + i.total_tax, 0))),
+    countCard("ISD Bill Rows", isdDocs.length),
+    amtCard("ISD Bill Tax", isdBillTax),
+    amtCard("Eligible ISD Tax (ISD-002)", isdEligibleTax),
+    amtCard("ISD Bill - Eligible Diff", isdDocs.length || isdEligibleDist.length ? round2(isdBillTax - isdEligibleTax) : 0),
+    countCard("BOE PDFs Parsed", boeDocs.length),
+    countCard("BOE Matched Imports", boeDocs.filter((d) => d.matched).length),
+    countCard("BOE GSTIN Mismatch", boeDocs.filter((d) => d.gstin_check !== "OK").length),
+    countCard("BOE Not in 2B", boeDocs.filter((d) => d.twob_check === "Not in 2B").length),
+    countCard("ISD GSTINs in ITC", isdInItc.size),
+    countCard("ISD GSTINs Absent", isdAbsent.size),
+  ].map((c) => ({
+    ...c,
+    warn: Boolean(
+      ((c.label.includes("Correction") || c.label.includes("Diff") || c.label.includes("Absent") ||
+        c.label.includes("Mismatch") || c.label.includes("Not in 2B") || c.label.includes("Unresolved")) && c.value)
+    ),
+  }));
+
+  const ledgerMismatchRows = ledgerDetails
+    .filter((d) => d[0] !== "OK")
+    .map((d) => [
+      d[1], d[2], d[3], d[6], d[7], fmtDate(d[8]), d[4] || "", d[5] || "",
+      d[13], d[17], d[22], d[21], d[24],
+    ]);
+
+  const preview = {
+    cards: previewCards,
+    ledgerMismatches: {
+      title: "Invoices where Sanitized ITC does not tie to GST REC ledger",
+      headers: ["Source", "Type", "RCM", "Vch No.", "SAP Doc", "Date", "GSTIN", "Party",
+        "ITC Tax", "GST REC Ledger", "ITC - REC Diff", "RCM Payable", "RCM Diff"],
+      rows: ledgerMismatchRows,
+      empty: "No invoice-level mismatch between Sanitized ITC and GST REC ledger.",
+    },
+    unresolvedB2b: {
+      title: "Unresolved B2B bills to ask accountant",
+      headers: ["Source", "Type", "Vch No.", "SAP Doc", "Date", "Party as per books",
+        "Taxable", "IGST", "CGST", "SGST", "Total Tax"],
+      rows: unresolvedB2b.map((i) => [
+        i.source, i.itc_type, i.invoice_no, i.sap_invoice_no, fmtDate(i.invoice_date),
+        i.supplier_name, round2(i.taxable), round2(i.igst), round2(i.cgst), round2(i.sgst),
+        round2(i.total_tax),
+      ]),
+      empty: "No unresolved B2B bills after current 2B/source/prior matching.",
+    },
+    corrections: {
+      title: "Immediate book correction flags",
+      headers: ["Flag", "Source", "Type", "Vch No.", "SAP Doc", "GSTIN", "Party",
+        "Invoice Match", "Tax Diff vs 2B", "Correction Amount", "Required Action"],
+      rows: corrections.map((r) => [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10]]),
+      empty: "No immediate book correction flags after sanitization.",
+    },
+    ledgerSummary: {
+      title: "Category-wise ITC vs SAP GST ledger movement",
+      headers: ["Status", "Source", "Type", "RCM", "Rows", "ITC Tax", "GST REC Ledger",
+        "RCM Payable Ledger", "ITC - REC Diff", "RCM Diff"],
+      rows: ledgerSummary.map((r) => [r[0], r[1], r[2], r[3], r[4], r[9], r[13], r[17], r[18], r[19]]),
+      empty: "No source invoices.",
+    },
+  };
+
   const isdGstins = new Set(isdDocs.filter((d) => d.gstin).map((d) => d.gstin));
   const isdGstinsInItc = new Set(isdDocs.filter((d) => d.gstin && d.gstin_in_itc).map((d) => d.gstin));
   const isdGstinsAbsent = new Set([...isdGstins].filter((g) => !isdGstinsInItc.has(g)));
 
   return {
     buffer,
+    preview,
     output: outputFileName(periodLabel, fyLabel),
     invoice_count: invoices.length,
     r2b_count: r2bDocs.length,
