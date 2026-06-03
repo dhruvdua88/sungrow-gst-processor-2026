@@ -23,7 +23,9 @@ Creates a focused 11-sheet reconciliation workbook from current GST files:
 
 ## Inputs
 
-- **SIPL tracker/template** (`.xlsx`) — required (presence-validated, same as the desktop tool)
+- **SIPL tracker/template** (`.xlsx`) — required (presence-validated, same as the desktop tool).
+  Download from the [SIPL Tracker master on Google Sheets](https://docs.google.com/spreadsheets/d/1JjYLfd0oO7Q-lKfhH_EtVbCJ6kqA7XY9iL8cVN4JzBo/edit?gid=2126389207#gid=2126389207)
+  (File → Download → Microsoft Excel, or [direct .xlsx export](https://docs.google.com/spreadsheets/d/1JjYLfd0oO7Q-lKfhH_EtVbCJ6kqA7XY9iL8cVN4JzBo/export?format=xlsx))
 - **Current GST workbook** (`.xlsx`) — required; must contain `PO`, `Non PO`, `GL Summary` sheets
 - **Current GSTR-2B JSON** — required (`returns_R2B_*.json` from the GST portal)
 - **Prior focused output files** (`.xlsx`, optional) — party→GSTIN alias matching from prior months

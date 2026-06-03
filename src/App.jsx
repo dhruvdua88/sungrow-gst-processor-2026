@@ -5,7 +5,7 @@ import "./App.css";
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function FileRow({ label, required, accept, multiple, files, onFiles, hint }) {
+function FileRow({ label, required, accept, multiple, files, onFiles, hint, link }) {
   const inputRef = useRef(null);
   const names = files.map((f) => f.name);
   return (
@@ -13,6 +13,11 @@ function FileRow({ label, required, accept, multiple, files, onFiles, hint }) {
       <label className="path-label">
         {label}
         {required ? <span className="req">*</span> : null}
+        {link ? (
+          <a className="row-link" href={link.href} target="_blank" rel="noreferrer">
+            {link.text}
+          </a>
+        ) : null}
       </label>
       <div
         className={`path-entry ${names.length ? "filled" : ""}`}
@@ -207,7 +212,11 @@ export default function App() {
             accept=".xlsx"
             files={trackerFiles}
             onFiles={setTrackerFiles}
-            hint="Select tracker .xlsx"
+            hint="Select tracker .xlsx — download from the template link above if you don't have it"
+            link={{
+              href: "https://docs.google.com/spreadsheets/d/1JjYLfd0oO7Q-lKfhH_EtVbCJ6kqA7XY9iL8cVN4JzBo/export?format=xlsx",
+              text: "⬇ Download template (.xlsx)",
+            }}
           />
           <FileRow
             label="Current GST workbook"
@@ -257,9 +266,20 @@ export default function App() {
           </div>
 
           <p className="note">
-            BOE input can be a ZIP, a PDF, or multiple files (nested ZIPs are scanned). ISD JSON adds
-            bill-wise b2b detail and uses isd.elglst only as the eligible control total. The focused
-            workbook downloads automatically when ready.
+            <strong>How to use:</strong> 1) Download the SIPL tracker template from the{" "}
+            <a
+              href="https://docs.google.com/spreadsheets/d/1JjYLfd0oO7Q-lKfhH_EtVbCJ6kqA7XY9iL8cVN4JzBo/edit?gid=2126389207#gid=2126389207"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Google Sheets master
+            </a>{" "}
+            (File → Download → .xlsx, or use the ⬇ link above) and select it here. 2) Select the
+            current GST workbook (PO / Non PO / GL Summary tabs) and the GSTR-2B JSON from the GST
+            portal. 3) Optional: prior focused outputs, BOE ZIP/PDFs, ISD JSON. BOE input can be a
+            ZIP, a PDF, or multiple files (nested ZIPs are scanned). ISD JSON adds bill-wise b2b
+            detail and uses isd.elglst only as the eligible control total. The focused workbook
+            downloads automatically when ready.
           </p>
 
           <button className="run-btn" onClick={startRun} disabled={running}>

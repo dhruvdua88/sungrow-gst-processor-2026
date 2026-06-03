@@ -125,6 +125,24 @@ body {
   margin-left: 3px;
 }
 
+.row-link {
+  display: block;
+  font-size: 11.5px;
+  color: var(--blue);
+  text-decoration: none;
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.row-link:hover {
+  text-decoration: underline;
+}
+
+.note a {
+  color: var(--blue);
+  font-weight: 600;
+}
+
 .path-entry {
   flex: 1;
   min-width: 0;
