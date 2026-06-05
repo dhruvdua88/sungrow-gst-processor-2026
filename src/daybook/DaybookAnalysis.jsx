@@ -300,6 +300,89 @@ function PartyView({ rows }) {
   );
 }
 
+// ---------- Party Transaction Matrix ----------
+const MATRIX_COLS = [
+  { key: "party", label: "Party", numeric: false },
+  { key: "total", label: "Account Total", numeric: true },
+  { key: "bank", label: "Bank", numeric: true },
+  { key: "expense", label: "Expense / Sales", numeric: true },
+  { key: "inventory", label: "Inventory/FA", numeric: true },
+  { key: "tds", label: "TDS", numeric: true },
+  { key: "gst", label: "GST", numeric: true },
+  { key: "other", label: "Other", numeric: true },
+  { key: "vouchers", label: "Vch", numeric: true },
+];
+function MatrixView({ matrix }) {
+  const [kind, setKind] = useState("AP");
+  const [sortKey, setSortKey] = useState("total");
+  const [dir, setDir] = useState("desc");
+  const [q, setQ] = useState("");
+  const base = kind === "AP" ? matrix.ap : kind === "AR" ? matrix.ar : matrix.parties;
+  const totals = kind === "AR" ? matrix.arTotals : matrix.apTotals;
+  const rows = useMemo(() => {
+    let r = base;
+    const n = q.trim().toLowerCase();
+    if (n) r = r.filter((x) => x.party.toLowerCase().includes(n));
+    const col = MATRIX_COLS.find((c) => c.key === sortKey);
+    r = [...r].sort((a, b) => {
+      const va = a[sortKey], vb = b[sortKey];
+      const cmp = col.numeric ? va - vb : String(va).localeCompare(String(vb));
+      return dir === "asc" ? cmp : -cmp;
+    });
+    return r;
+  }, [base, q, sortKey, dir]);
+  const click = (k) => { if (sortKey === k) setDir((d) => (d === "asc" ? "desc" : "asc")); else { setSortKey(k); setDir("desc"); } };
+  const shown = rows.slice(0, 500);
+  return (
+    <Card title="Party Transaction Matrix" sub="For each AP / AR party, what hits the account — Bank · Expense/Sales · Inventory · TDS · GST · Other (contra split pro-rata across parties in a voucher). Toggle AP/AR and click a category to sort.">
+      <div className="dbk-matrix-controls">
+        <div className="dbk-seg">
+          {["AP", "AR", "All"].map((k) => (
+            <button key={k} className={"dbk-segbtn" + (kind === k ? " active" : "")} onClick={() => setKind(k)}>
+              {k === "AP" ? "Accounts Payable" : k === "AR" ? "Accounts Receivable" : "All parties"}
+            </button>
+          ))}
+        </div>
+        <span className="dbk-sortlabel">Sort by:</span>
+        <div className="dbk-sortbtns">
+          {MATRIX_COLS.filter((c) => c.numeric).map((c) => (
+            <button key={c.key} className={"dbk-sortbtn" + (sortKey === c.key ? " active" : "")} onClick={() => click(c.key)}>
+              {c.label}{sortKey === c.key ? (dir === "asc" ? " ▲" : " ▼") : ""}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="dbk-toolbar">
+        <input className="dbk-search" placeholder="Filter party…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <span className="dbk-count">{rows.length.toLocaleString("en-IN")} parties{rows.length > 500 ? " · top 500" : ""}</span>
+      </div>
+      <div className="dbk-tablewrap">
+        <table className="dbk-table">
+          <thead><tr>{MATRIX_COLS.map((c) => (
+            <th key={c.key} className={c.numeric ? "num" : ""} onClick={() => click(c.key)}>{c.label}{sortKey === c.key ? (dir === "asc" ? " ▲" : " ▼") : ""}</th>
+          ))}</tr></thead>
+          <tbody>
+            <tr className="dbk-totalrow">
+              <td>— {kind === "All" ? "AP" : kind} TOTAL —</td>
+              <td className="num">{inr(totals.total)}</td>
+              {["bank", "expense", "inventory", "tds", "gst", "other"].map((c) => <td key={c} className="num">{inr(totals[c])}</td>)}
+              <td className="num">{totals.vouchers}</td>
+            </tr>
+            {shown.map((p, i) => (
+              <tr key={i}>
+                <td>{p.party}{kind === "All" ? <span className="dbk-kindtag">{p.kind}</span> : null}</td>
+                <td className="num">{inr(p.total)}</td>
+                {["bank", "expense", "inventory", "tds", "gst", "other"].map((c) => <td key={c} className="num">{p[c] ? inr(p[c]) : "—"}</td>)}
+                <td className="num">{p.vouchers}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 const LINE_TYPES = ["Expense", "TDS", "GST", "Vendor/AP", "Bank", "Inventory/FA", "Rev/COS", "Receivable", "Other"];
 function TxnView({ txns }) {
   const [type, setType] = useState("All");
@@ -438,6 +521,7 @@ export default function DaybookAnalysis() {
           <SalesView sales={data.res.sales} />
           <ExpenseView rows={data.res.mis.expenseTds} />
           <PartyView rows={data.res.mis.vendors} />
+          <MatrixView matrix={data.res.matrix} />
           <TxnView txns={data.txns} />
         </>
       )}

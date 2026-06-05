@@ -109,3 +109,16 @@
 .dbk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .dbk-chip { border: 0; border-radius: 8px; padding: 4px 9px; font-size: 12px; font-weight: 600; background: #f1f5f9; color: #475569; cursor: pointer; }
 .dbk-chip.active { background: linear-gradient(135deg,#1e4e8c,#0ea5e9); color: #fff; }
+
+/* transaction matrix */
+.dbk-matrix-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.dbk-seg { display: inline-flex; background: #eef2f7; border-radius: 10px; padding: 3px; }
+.dbk-segbtn { border: 0; background: transparent; color: #475569; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.dbk-segbtn.active { background: #fff; color: #1e4e8c; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+.dbk-sortlabel { font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; margin-left: 4px; }
+.dbk-sortbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.dbk-sortbtn { border: 1px solid #d8e0ea; background: #fff; color: #475569; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+.dbk-sortbtn:hover { border-color: #1e4e8c; }
+.dbk-sortbtn.active { background: linear-gradient(135deg,#1e4e8c,#0ea5e9); color: #fff; border-color: transparent; }
+.dbk-totalrow td { background: #eef4fb !important; font-weight: 800; color: #0f172a; border-bottom: 2px solid #cdd9ea; }
+.dbk-kindtag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 10px; font-weight: 700; background: #e0e7ff; color: #4338ca; }
