@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { buildWorkbook } from "./engine/index.js";
+import DaybookAnalysis from "./daybook/DaybookAnalysis.jsx";
 import "./App.css";
 
 const fmt2 = (n) =>
@@ -153,6 +154,7 @@ export default function App() {
   const [log, setLog] = useState(["Ready. Select files and create the focused workbook."]);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
+  const [mode, setMode] = useState("gst"); // "gst" (existing) | "daybook" (new module)
 
   const appendLog = (msg) => setLog((prev) => [...prev, msg]);
 
@@ -277,7 +279,28 @@ export default function App() {
         </div>
       </header>
 
+      <div className="mode-tabs" style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 24px 0", display: "flex", gap: 8 }}>
+        {[["gst", "GST Processor"], ["daybook", "Daybook Analysis"]].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setMode(id)}
+            style={{
+              border: "1px solid " + (mode === id ? "transparent" : "#cbd5e1"),
+              background: mode === id ? "linear-gradient(135deg,#1e4e8c,#0ea5e9)" : "#fff",
+              color: mode === id ? "#fff" : "#475569",
+              borderRadius: 10, padding: "7px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <main className="main">
+        {mode === "daybook" ? (
+          <DaybookAnalysis />
+        ) : (
+          <>
         <section className="card form-card">
           <FileRow
             label="SIPL tracker/template"
@@ -387,6 +410,8 @@ export default function App() {
           <h2>Status</h2>
           <pre className="log">{log.join("\n")}</pre>
         </section>
+          </>
+        )}
       </main>
 
       <footer className="footer">

@@ -1,0 +1,111 @@
+/* Daybook Analysis — scoped styles (dbk-*) so they don't touch the GST UI. */
+.dbk-root { display: grid; gap: 18px; }
+.dbk-card {
+  background: #fff; border: 1px solid #e6eaf0; border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px -14px rgba(15,23,42,.12);
+  overflow: hidden;
+}
+.dbk-card-head { padding: 16px 20px; border-bottom: 1px solid #eef1f6; background: linear-gradient(#fff, #f8fafc); }
+.dbk-card-head h3 { margin: 0; font-size: 16px; font-weight: 800; color: #0f172a; letter-spacing: -.01em; }
+.dbk-card-head p { margin: 3px 0 0; font-size: 12.5px; color: #64748b; }
+.dbk-card-body { padding: 18px 20px; }
+.dbk-muted { color: #94a3b8; font-size: 13px; }
+.dbk-subhead { margin: 18px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+
+/* upload */
+.dbk-upload-card { padding: 18px 20px; display: grid; gap: 14px; }
+.dbk-upload-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.dbk-upload-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: #1e4e8c; }
+.dbk-upload-head p { margin: 4px 0 0; font-size: 13px; color: #64748b; max-width: 640px; }
+.dbk-month { display: flex; align-items: center; gap: 8px; background: #eef4fb; padding: 6px 10px; border-radius: 10px; }
+.dbk-month span { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #1e4e8c; }
+.dbk-month input { width: 86px; border: 1px solid #cdd9ea; border-radius: 8px; padding: 4px 8px; font-size: 13px; font-weight: 600; }
+.dbk-drop {
+  border: 2px dashed #cbd5e1; border-radius: 14px; padding: 26px; text-align: center;
+  cursor: pointer; color: #64748b; font-size: 14px; transition: all .2s; background: #fff;
+}
+.dbk-drop:hover { border-color: #1e4e8c; background: #f4f8fd; }
+.dbk-drop.done { border-color: #86efac; background: #f0fdf4; }
+.dbk-busy { color: #1e4e8c; font-size: 13px; font-weight: 600; }
+.dbk-dl {
+  justify-self: start; background: linear-gradient(135deg,#1e4e8c,#2563a8,#0ea5e9); color: #fff;
+  border: 0; border-radius: 12px; padding: 10px 18px; font-size: 14px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 8px 22px -8px rgba(30,78,140,.5);
+}
+.dbk-dl:hover { filter: brightness(1.05); }
+
+/* KPIs */
+.dbk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 6px; }
+.dbk-kpis-top { margin-top: 4px; }
+.dbk-kpi { border: 1px solid #e6eaf0; border-radius: 12px; padding: 12px 14px; background: #fff; }
+.dbk-kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; }
+.dbk-kpi-value { margin-top: 4px; font-size: 19px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+.dbk-kpi-value.brand { color: #1e4e8c; } .dbk-kpi-value.ok { color: #15803d; } .dbk-kpi-value.bad { color: #be123c; } .dbk-kpi-value.manual { color: #6d28d9; }
+
+/* P&L */
+.dbk-pnl-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .dbk-pnl-grid { grid-template-columns: 1fr; } }
+.dbk-pnl-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; }
+.dbk-pnl-row.bold { border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; }
+.dbk-pnl-label { width: 180px; flex: none; font-size: 13px; color: #64748b; }
+.dbk-pnl-row.bold .dbk-pnl-label { font-weight: 700; color: #0f172a; }
+.dbk-pnl-bar { flex: 1; height: 8px; background: #eef2f7; border-radius: 99px; overflow: hidden; }
+.dbk-pnl-bar > span { display: block; height: 100%; background: linear-gradient(90deg,#1e4e8c,#0ea5e9); border-radius: 99px; }
+.dbk-pnl-amt { width: 150px; text-align: right; font-size: 13px; font-weight: 700; color: #0f172a; font-variant-numeric: tabular-nums; }
+.dbk-pnl-amt.neg { color: #be123c; }
+.dbk-pnl-pct { width: 60px; text-align: right; font-size: 12px; color: #94a3b8; }
+.dbk-topexp { border: 1px solid #e6eaf0; border-radius: 12px; padding: 14px; background: #f8fafc; }
+.dbk-topexp h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; color: #64748b; }
+.dbk-topexp-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.dbk-topexp-name { width: 140px; flex: none; font-size: 12px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbk-topexp-bar { flex: 1; height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; }
+.dbk-topexp-bar > span { display: block; height: 100%; background: #1e4e8caa; border-radius: 99px; }
+.dbk-topexp-amt { width: 96px; text-align: right; font-size: 12px; font-weight: 600; color: #0f172a; }
+
+/* rate cards */
+.dbk-ratecards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.dbk-ratecard { border: 1px solid #e6eaf0; border-radius: 12px; padding: 12px 14px; position: relative; overflow: hidden; }
+.dbk-ratecard::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg,#1e4e8c,#0ea5e9); }
+.dbk-ratecard-top { display: flex; justify-content: space-between; align-items: baseline; }
+.dbk-ratecard-rate { font-size: 18px; font-weight: 800; color: #1e4e8c; }
+.dbk-ratecard-top .num { font-size: 11px; color: #64748b; }
+.dbk-ratecard-amt { margin-top: 4px; font-size: 15px; font-weight: 700; color: #0f172a; }
+.dbk-ratecard-sub { margin-top: 2px; font-size: 11px; color: #64748b; }
+
+/* warn */
+.dbk-warn { margin: 12px 0; padding: 11px 14px; border: 1px solid #fdba74; background: #fff7ed; color: #9a3412; border-radius: 12px; font-size: 13px; }
+.dbk-ok { color: #15803d; font-weight: 600; } .dbk-bad { color: #be123c; font-weight: 700; }
+.dbk-warnp { color: #b45309; }
+
+/* tables */
+.dbk-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.dbk-search { width: 280px; max-width: 100%; border: 1px solid #cbd5e1; border-radius: 9px; padding: 7px 11px; font-size: 13px; outline: none; }
+.dbk-search:focus { border-color: #1e4e8c; box-shadow: 0 0 0 3px rgba(30,78,140,.12); }
+.dbk-count { margin-left: auto; font-size: 11.5px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+.dbk-tablewrap { border: 1px solid #e6eaf0; border-radius: 12px; overflow: auto; max-height: 520px; }
+.dbk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dbk-table th { position: sticky; top: 0; z-index: 1; background: #f1f5f9; color: #475569; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 9px 12px; border-bottom: 2px solid #e2e8f0; cursor: pointer; white-space: nowrap; user-select: none; }
+.dbk-table th:hover { background: #e7edf5; }
+.dbk-table td { padding: 7px 12px; border-bottom: 1px solid #f1f5f9; color: #1f2937; white-space: nowrap; }
+.dbk-table tr:nth-child(even) td { background: #fafbfd; }
+.dbk-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dbk-empty { color: #94a3b8; text-align: center; padding: 14px; }
+.dbk-grouprow { cursor: pointer; }
+.dbk-grouprow td { font-weight: 600; }
+.dbk-grouprow:hover td { background: #eef4fb; }
+.dbk-grouprow.open td { background: #eaf2fc; }
+.dbk-childrow td { background: #f8fafc !important; color: #64748b; font-size: 12.5px; font-weight: 400; }
+.dbk-childfirst { padding-left: 26px !important; }
+.dbk-expcol { width: 26px; text-align: center; color: #94a3b8; }
+
+/* tags / chips */
+.dbk-tag { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.dbk-tag.b0 { background: #ffe4e6; color: #be123c; }
+.dbk-tag.b5 { background: #e0f2fe; color: #0369a1; }
+.dbk-tag.b12 { background: #e0e7ff; color: #4338ca; }
+.dbk-tag.b18 { background: #ede9fe; color: #6d28d9; }
+.dbk-tag.b28, .dbk-tag.bx { background: #fef3c7; color: #b45309; }
+.dbk-ltag { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; background: #f1f5f9; color: #475569; }
+.dbk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.dbk-chip { border: 0; border-radius: 8px; padding: 4px 9px; font-size: 12px; font-weight: 600; background: #f1f5f9; color: #475569; cursor: pointer; }
+.dbk-chip.active { background: linear-gradient(135deg,#1e4e8c,#0ea5e9); color: #fff; }
