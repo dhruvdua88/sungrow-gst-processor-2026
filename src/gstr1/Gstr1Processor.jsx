@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
-import { processGstr1 } from "./engine.js";
+import { processGstr1, VALID_RATES, VALID_UQC } from "./engine.js";
 import "./gstr1.css";
 
 const inr = (n) => (n == null || n === "" ? "—" : Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -540,6 +540,123 @@ function download(blob, name) {
   URL.revokeObjectURL(url);
 }
 
+// Portal-schema validation of a single HSN row → { field: errorMessage }.
+// These are the rules that make the GST portal REJECT the JSON.
+function validateHsnRow(row) {
+  const errs = {};
+  const hsn = String(row.hsn_sc ?? "").trim();
+  const isSac = /^99/.test(hsn);
+  const uqc = String(row.uqc ?? "").trim().toUpperCase();
+  if (!/^\d{6}$|^\d{8}$/.test(hsn)) errs.hsn_sc = "HSN/SAC must be numeric, 6 or 8 digits";
+  if (!VALID_RATES.includes(Number(row.rt))) errs.rt = "Not a valid GST rate slab";
+  if (!VALID_UQC.has(uqc)) errs.uqc = "UQC not a portal-standard code";
+  else if (isSac && uqc !== "NA") errs.uqc = "Service SAC (99…) must use UQC NA (RET191353)";
+  else if (!isSac && uqc === "NA") errs.uqc = "Goods must use a real UQC, not NA";
+  if (isSac && Number(row.qty) !== 0) errs.qty = "Service SAC qty must be 0 (RET191355)";
+  if (!isSac && !(Number(row.qty) > 0)) errs.qty = "Goods qty must be greater than 0";
+  if (!String(row.desc ?? "").trim()) errs.desc = "Description is required (Phase-3 mandatory)";
+  return errs;
+}
+
+const HSN_COLS = [
+  { f: "hsn_sc", label: "HSN/SAC", w: 96 }, { f: "desc", label: "Description", w: 240 },
+  { f: "uqc", label: "UQC", w: 64 }, { f: "qty", label: "Qty", w: 84, num: true },
+  { f: "rt", label: "Rate %", w: 64, num: true }, { f: "txval", label: "Taxable", w: 120, num: true },
+  { f: "iamt", label: "IGST", w: 104, num: true }, { f: "camt", label: "CGST", w: 96, num: true },
+  { f: "samt", label: "SGST", w: 96, num: true }, { f: "csamt", label: "Cess", w: 80, num: true },
+];
+
+// Editable Table-12 grid: fix invalid cells, see edits in red, then generate the JSON.
+function EditableHsn({ res }) {
+  const seed = () => {
+    const h = res.json?.hsn || {};
+    if (Array.isArray(h.data)) return h.data.map((r) => ({ ...r, _seg: "data" }));
+    return [
+      ...(h.hsn_b2b || []).map((r) => ({ ...r, _seg: "b2b" })),
+      ...(h.hsn_b2c || []).map((r) => ({ ...r, _seg: "b2c" })),
+    ];
+  };
+  const [rows, setRows] = useState(seed);
+  const [edited, setEdited] = useState(() => new Set());
+  const [done, setDone] = useState(false);
+  // Reseed happens via a `key` prop on the parent (remounts on each new run).
+
+  const errorsByRow = useMemo(() => rows.map(validateHsnRow), [rows]);
+  const totalErrors = errorsByRow.reduce((a, e) => a + Object.keys(e).length, 0);
+
+  const setCell = (i, f, v) => {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [f]: v } : r)));
+    setEdited((prev) => new Set(prev).add(`${i}:${f}`));
+    setDone(false);
+  };
+
+  const generate = () => {
+    const mk = (arr) => arr.map((r, i) => ({
+      num: i + 1, hsn_sc: String(r.hsn_sc).trim(), desc: String(r.desc || "").slice(0, 30),
+      uqc: String(r.uqc || "OTH").toUpperCase(), qty: Number(r.qty) || 0, txval: Number(r.txval) || 0,
+      rt: Number(r.rt) || 0, iamt: Number(r.iamt) || 0, camt: Number(r.camt) || 0,
+      samt: Number(r.samt) || 0, csamt: Number(r.csamt) || 0,
+    }));
+    const seg = {};
+    for (const r of rows) (seg[r._seg] ||= []).push(r);
+    const hsn = seg.data ? { data: mk(seg.data) } : { hsn_b2b: mk(seg.b2b || []), hsn_b2c: mk(seg.b2c || []) };
+    const json = { ...res.json, hsn };
+    download(new Blob([JSON.stringify(json, null, 2)], { type: "application/json" }),
+      `GSTR1_${res.meta.gstin || "return"}_${res.meta.fp}_EDITED.json`);
+    setDone(true);
+  };
+
+  return (
+    <div className="g1-edit-view">
+      <p className="g1-cli-note">
+        Edit any cell to fix what the portal rejects (invalid HSN code, blank description, wrong UQC, etc.).
+        <b> Cells you change turn red.</b> Cells that are still invalid get a red outline — hover to see why.
+        The <b>Generate JSON</b> button enables once every row passes portal-schema validation.
+      </p>
+      <div className="g1-edit-bar">
+        {totalErrors === 0
+          ? <span className="g1-edit-ok">✓ All {rows.length} rows valid — ready to generate</span>
+          : <span className="g1-edit-err">⛔ {totalErrors} cell(s) invalid across {errorsByRow.filter((e) => Object.keys(e).length).length} row(s) — fix the red-outlined cells</span>}
+        <button className="g1-edit-gen" onClick={generate} disabled={totalErrors > 0}>⬇ Generate GSTR-1 JSON</button>
+        <button className="g1-dl" onClick={() => { setRows(seed()); setEdited(new Set()); setDone(false); }}>↺ Reset to original</button>
+        {done && <span className="g1-edit-ok">JSON downloaded ✓</span>}
+      </div>
+      <div className="g1-edit-wrap">
+        <table className="g1-edit">
+          <thead>
+            <tr>
+              <th>#</th>
+              {HSN_COLS.map((c) => <th key={c.f} style={{ minWidth: c.w }}>{c.label}</th>)}
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const errs = errorsByRow[i];
+              const firstErr = Object.values(errs)[0];
+              return (
+                <tr key={i}>
+                  <td className="g1-edit-rn">{i + 1}</td>
+                  {HSN_COLS.map((c) => {
+                    const isEdited = edited.has(`${i}:${c.f}`);
+                    const isBad = !!errs[c.f];
+                    return (
+                      <td key={c.f} className={`${c.num ? "num" : ""} ${isEdited ? "edited" : ""} ${isBad ? "bad" : ""}`} title={errs[c.f] || ""}>
+                        <input value={row[c.f] ?? ""} onChange={(e) => setCell(i, c.f, e.target.value)} inputMode={c.num ? "decimal" : "text"} />
+                      </td>
+                    );
+                  })}
+                  <td className="g1-edit-status">{firstErr ? <span className="g1-edit-rowerr" title={Object.values(errs).join("; ")}>⚠ {firstErr}</span> : <span className="g1-edit-ok">✓</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Gstr1Processor() {
   const [einvFile, setEinvFile] = useState(null);
   const [salesFile, setSalesFile] = useState(null);
@@ -621,12 +738,13 @@ export default function Gstr1Processor() {
               <button className="g1-dl" onClick={dlExcel}>⬇ Download validation workbook (.xlsx)</button>
             </div>
             <div className="g1-tabs">
-              {[["client", "🦅 Client Summary"], ["dev", "Deviations & Reconciliation"], ["t12", "Table 12 (HSN)"], ["t13", "Table 13 (Docs)"], ["checks", "Validation Checks"], ["json", "JSON Preview"]].map(([id, l]) => (
+              {[["client", "🦅 Client Summary"], ["edit", "✏️ Fix & Generate JSON"], ["dev", "Deviations & Reconciliation"], ["t12", "Table 12 (HSN)"], ["t13", "Table 13 (Docs)"], ["checks", "Validation Checks"], ["json", "JSON Preview"]].map(([id, l]) => (
                 <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{l}</button>
               ))}
             </div>
 
             {tab === "client" && <ClientSummary res={res} onDownload={dlClientExcel} busy={xlBusy} />}
+            {tab === "edit" && <EditableHsn key={`${res.meta.fp}:${res.counts.hsnRows}:${res.counts.salesRows}`} res={res} />}
             {tab === "dev" && <Deviations res={res} />}
             {tab === "checks" && <ChecksTable res={res} />}
             {tab === "t12" && (
