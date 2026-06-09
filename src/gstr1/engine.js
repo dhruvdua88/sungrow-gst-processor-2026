@@ -338,10 +338,14 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   add("C2", "Every Table-12 rate is a valid GST slab", "0 invalid", `${badRate.length} ${badRate.slice(0, 6)}`, !badRate.length);
   const badUqc = t12.filter((h) => h.uqc && !VALID_UQC.has(h.uqc.toUpperCase())).map((h) => `${h.hsn}:${h.uqc}`);
   add("C3", "Every UQC is a portal-standard code", "0 invalid", `${badUqc.length} ${badUqc.slice(0, 6)}`, !badUqc.length);
-  const badSacUqc = t12.filter((h) => /^99/.test(h.hsn) && !["OTH", "NA"].includes(String(h.uqc).toUpperCase())).map((h) => `${h.hsn}:${h.uqc}`);
-  add("C3b", "Service SAC (99…) rows use UQC OTH/NA (RET191353)", "0 invalid", `${badSacUqc.length} ${badSacUqc.slice(0, 6)}`, !badSacUqc.length);
+  const badSacUqc = t12.filter((h) => /^99/.test(h.hsn) && String(h.uqc).toUpperCase() !== "NA").map((h) => `${h.hsn}:${h.uqc}`);
+  add("C3b", "Service SAC (99…) rows use UQC NA — OTH is rejected too (RET191353)", "0 invalid", `${badSacUqc.length} ${badSacUqc.slice(0, 6)}`, !badSacUqc.length);
   const badSacQty = t12.filter((h) => /^99/.test(h.hsn) && round2(h.qty) !== 0).map((h) => `${h.hsn}:${h.qty}`);
   add("C3c", "Service SAC (99…) rows have qty 0 (RET191355)", "0 invalid", `${badSacQty.length} ${badSacQty.slice(0, 6)}`, !badSacQty.length);
+  const badGoodsUqc = t12.filter((h) => !/^99/.test(h.hsn) && String(h.uqc).toUpperCase() === "NA").map((h) => h.hsn);
+  add("C3d", "Goods (non-99) rows use a real UQC, not NA", "0 invalid", `${badGoodsUqc.length} ${badGoodsUqc.slice(0, 6)}`, !badGoodsUqc.length);
+  const badGoodsQty = t12.filter((h) => !/^99/.test(h.hsn) && round2(h.qty) <= 0).map((h) => h.hsn);
+  add("C3e", "Goods (non-99) rows have qty > 0", "0 invalid", `${badGoodsQty.length} ${badGoodsQty.slice(0, 6)}`, !badGoodsQty.length);
   const noDesc = t12.filter((h) => !h.desc).map((h) => h.hsn);
   add("C4", "Every HSN row has a description (mandatory Phase-3)", "0 blank", `${noDesc.length}`, !noDesc.length);
   const arith = t12.filter((h) => { const e = (h.txval * h.rt) / 100; return Math.abs(e - (h.iamt + h.camt + h.samt)) > Math.max(1, e * 0.02); }).map((h) => `${h.hsn}@${h.rt}`);
