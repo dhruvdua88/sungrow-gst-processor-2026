@@ -109,6 +109,20 @@
 .g1-cli-kpi .v { display: block; font-size: 20px; font-weight: 800; color: #0f2c52; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .g1-cli-kpi .s { display: block; font-size: 11px; color: #94a3b8; margin-top: 2px; }
 
+.g1-cli-split { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.g1-cli-split span { flex: 1; min-width: 120px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; font-size: 13px; color: #0f2c52; font-variant-numeric: tabular-nums; }
+.g1-cli-split b { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 6px; }
+
+/* Collapsible sections */
+.g1-fold { border: 1px solid #e2e8f0; border-radius: 12px; margin: 14px 0; overflow: hidden; background: #fff; }
+.g1-fold > summary { list-style: none; cursor: pointer; padding: 12px 16px; font-weight: 800; font-size: 14px; color: #0f2c52; display: flex; align-items: center; gap: 8px; background: #f8fafc; user-select: none; }
+.g1-fold > summary::-webkit-details-marker { display: none; }
+.g1-fold > summary::before { content: "▸"; color: #0ea5e9; font-size: 12px; transition: transform .15s; }
+.g1-fold[open] > summary::before { transform: rotate(90deg); }
+.g1-fold > summary:hover { background: #eff6ff; }
+.g1-fold .badge { margin-left: auto; }
+.g1-fold-body { padding: 12px 14px; }
+
 .g1-cli-sec { font-size: 14px; font-weight: 800; color: #0f2c52; margin: 20px 0 8px; display: flex; align-items: center; gap: 8px; }
 .g1-cli-sec .badge { font-size: 11px; font-weight: 700; color: #0c4a6e; background: #e0f2fe; border-radius: 999px; padding: 2px 10px; }
 .g1-cli-wrap { border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }

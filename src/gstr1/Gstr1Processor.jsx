@@ -428,16 +428,17 @@ async function buildClientExcel(res) {
 
 function BridgeBlock({ b }) {
   const row = (label, v, note) => (
-    <tr key={label} className={Math.abs(v) < 1 ? "g1-br-zero" : ""}>
-      <td className="left">less: {label}</td>
-      <td className="num">{v < 0 ? "+ " : "− "}{inr(Math.abs(v))}</td>
-      <td className="left small">{note}</td>
-    </tr>
+    Math.abs(v) < 1 ? null : (
+      <tr key={label}>
+        <td className="left">less: {label}</td>
+        <td className="num">{v < 0 ? "+ " : "− "}{inr(Math.abs(v))}</td>
+        <td className="left small">{note}</td>
+      </tr>
+    )
   );
   return (
     <>
-      <div className="g1-cli-sec">Table 12 → E-invoice Support Reconciliation <span className="badge">base = sales sheet</span></div>
-      <div className="g1-cli-wrap">
+      <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
         <table className="g1-table g1-br">
           <tbody>
             <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12 · net of CDN in the sheet</td></tr>
@@ -457,12 +458,29 @@ function BridgeBlock({ b }) {
   );
 }
 
+function Fold({ title, badge, open, children }) {
+  return (
+    <details className="g1-fold" {...(open ? { open: true } : {})}>
+      <summary>{title}{badge != null ? <span className="badge">{badge}</span> : null}</summary>
+      <div className="g1-fold-body">{children}</div>
+    </details>
+  );
+}
+
 function ClientSummary({ res, onDownload, busy }) {
   const t = res.totals;
   const totalTax = (t.t12Igst || 0) + (t.t12Cgst || 0) + (t.t12Sgst || 0) + (t.t12Cess || 0);
   const totalVal = (t.t12Txbl || 0) + totalTax;
   const cls = res.portalReady ? (res.allPass ? "ok" : "warn") : "bad";
   const statusTxt = res.portalReady ? (res.allPass ? "✓ Ready to file" : "⚠ Review deviations") : "✗ Blocking issues";
+  const rollup = useMemo(() => {
+    const m = {};
+    for (const h of res.table12) {
+      const g = (m[h.rt] ||= { rt: h.rt, lines: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+      g.lines++; g.txval += h.txval; g.iamt += h.iamt; g.camt += h.camt; g.samt += h.samt; g.csamt += h.csamt;
+    }
+    return Object.values(m).sort((a, b) => a.rt - b.rt);
+  }, [res.table12]);
   const kpi = (label, value, sub, accent) => (
     <div className={`g1-cli-kpi ${accent ? "accent" : ""}`} key={label}>
       <span className="k">{label}</span><span className="v">{value}</span>{sub ? <span className="s">{sub}</span> : null}
@@ -495,41 +513,59 @@ function ClientSummary({ res, onDownload, busy }) {
 
       <div className="g1-cli-kpis">
         {kpi("Taxable Value", inr0(t.t12Txbl))}
-        {kpi("IGST", inr0(t.t12Igst))}
-        {kpi("CGST", inr0(t.t12Cgst))}
-        {kpi("SGST", inr0(t.t12Sgst))}
-      </div>
-      <div className="g1-cli-kpis">
-        {kpi("Cess", inr0(t.t12Cess))}
         {kpi("Total Tax", inr0(totalTax))}
         {kpi("Total Invoice Value", inr0(totalVal), "taxable + tax", true)}
-        {kpi("Credit Notes", res.counts.cdnr, res.counts.cancelled ? `${res.counts.cancelled} cancelled IRNs` : null)}
+        {kpi("Invoices", res.counts.validInvoices, `${res.counts.cdnr} CN/DN · ${res.counts.cancelled} cancelled`)}
+      </div>
+      <div className="g1-cli-split">
+        <span><b>IGST</b> {inr0(t.t12Igst)}</span>
+        <span><b>CGST</b> {inr0(t.t12Cgst)}</span>
+        <span><b>SGST</b> {inr0(t.t12Sgst)}</span>
+        <span><b>Cess</b> {inr0(t.t12Cess)}</span>
       </div>
 
-      {res.bridge && <BridgeBlock b={res.bridge} />}
+      {res.bridge && (
+        <Fold open title="Sales sheet ↔ e-invoice reconciliation" badge={Math.abs(res.bridge.residual) < 1 ? "✓ tied" : "⚠ check"}>
+          <BridgeBlock b={res.bridge} />
+        </Fold>
+      )}
 
-      <div className="g1-cli-sec">HSN / SAC Summary <span className="badge">Table 12 · {res.table12.length} lines</span></div>
+      <div className="g1-cli-sec">HSN / SAC Summary <span className="badge">{rollup.length} rates · {res.table12.length} lines</span></div>
       <div className="g1-cli-wrap">
         <table className="g1-table">
-          <thead><tr><th>Sr</th><th>HSN/SAC</th><th className="left">Description</th><th>UQC</th><th className="num">Qty</th><th className="num">Rate%</th><th className="num">Taxable</th><th className="num">IGST</th><th className="num">CGST</th><th className="num">SGST</th><th className="num">Cess</th><th className="num">Total</th></tr></thead>
+          <thead><tr><th className="num">Rate %</th><th className="num">Lines</th><th className="num">Taxable</th><th className="num">IGST</th><th className="num">CGST</th><th className="num">SGST</th><th className="num">Cess</th></tr></thead>
           <tbody>
-            {res.table12.map((h) => (
-              <tr key={h.sr + h.hsn + h.rt}><td>{h.sr}</td><td>{h.hsn}</td><td className="left small">{h.desc}</td><td>{h.uqc}</td><td className="num">{Number(h.qty).toLocaleString("en-IN")}</td><td className="num">{h.rt}</td><td className="num">{inr(h.txval)}</td><td className="num">{inr(h.iamt)}</td><td className="num">{inr(h.camt)}</td><td className="num">{inr(h.samt)}</td><td className="num">{inr(h.csamt)}</td><td className="num">{inr(h.total)}</td></tr>
+            {rollup.map((g) => (
+              <tr key={g.rt}><td className="num">{g.rt}</td><td className="num">{g.lines}</td><td className="num">{inr(g.txval)}</td><td className="num">{inr(g.iamt)}</td><td className="num">{inr(g.camt)}</td><td className="num">{inr(g.samt)}</td><td className="num">{inr(g.csamt)}</td></tr>
             ))}
-            <tr className="row-total"><td></td><td>TOTAL</td><td></td><td></td><td></td><td></td><td className="num">{inr(t.t12Txbl)}</td><td className="num">{inr(t.t12Igst)}</td><td className="num">{inr(t.t12Cgst)}</td><td className="num">{inr(t.t12Sgst)}</td><td className="num">{inr(t.t12Cess)}</td><td className="num">{inr(totalVal)}</td></tr>
+            <tr className="row-total"><td className="num">TOTAL</td><td className="num">{res.table12.length}</td><td className="num">{inr(t.t12Txbl)}</td><td className="num">{inr(t.t12Igst)}</td><td className="num">{inr(t.t12Cgst)}</td><td className="num">{inr(t.t12Sgst)}</td><td className="num">{inr(t.t12Cess)}</td></tr>
           </tbody>
         </table>
       </div>
 
-      <div className="g1-cli-sec">Documents Issued <span className="badge">Table 13</span></div>
-      <div className="g1-cli-wrap">
-        <table className="g1-table">
-          <thead><tr><th>Code</th><th className="left">Nature of Document</th><th>From</th><th>To</th><th className="num">Total</th><th className="num">Cancelled</th><th className="num">Net</th></tr></thead>
-          <tbody>{res.table13.map((d) => (<tr key={d.code}><td>{d.code}</td><td className="left">{d.nature}</td><td>{d.from}</td><td>{d.to}</td><td className="num">{d.total}</td><td className="num">{d.cancel}</td><td className="num">{d.net}</td></tr>))}</tbody>
-        </table>
-      </div>
+      <Fold title="View all HSN/SAC lines" badge={res.table12.length}>
+        <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
+          <table className="g1-table">
+            <thead><tr><th>Sr</th><th>HSN/SAC</th><th className="left">Description</th><th>UQC</th><th className="num">Qty</th><th className="num">Rate%</th><th className="num">Taxable</th><th className="num">IGST</th><th className="num">CGST</th><th className="num">SGST</th><th className="num">Cess</th></tr></thead>
+            <tbody>
+              {res.table12.map((h) => (
+                <tr key={h.sr + h.hsn + h.rt}><td>{h.sr}</td><td>{h.hsn}</td><td className="left small">{h.desc}</td><td>{h.uqc}</td><td className="num">{Number(h.qty).toLocaleString("en-IN")}</td><td className="num">{h.rt}</td><td className="num">{inr(h.txval)}</td><td className="num">{inr(h.iamt)}</td><td className="num">{inr(h.camt)}</td><td className="num">{inr(h.samt)}</td><td className="num">{inr(h.csamt)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Fold>
 
-      <p className="g1-cli-note">Bird's-eye view for the client — Table 12 (HSN/SAC) and Table 13 (documents issued), with the same figures that flow into the GSTR-1 JSON. Use <b>Download formatted Excel</b> for a presentation-grade workbook to share with the client.</p>
+      <Fold title="Documents issued (Table 13)" badge={res.table13.length}>
+        <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
+          <table className="g1-table">
+            <thead><tr><th>Code</th><th className="left">Nature of Document</th><th>From</th><th>To</th><th className="num">Total</th><th className="num">Cancelled</th><th className="num">Net</th></tr></thead>
+            <tbody>{res.table13.map((d) => (<tr key={d.code}><td>{d.code}</td><td className="left">{d.nature}</td><td>{d.from}</td><td>{d.to}</td><td className="num">{d.total}</td><td className="num">{d.cancel}</td><td className="num">{d.net}</td></tr>))}</tbody>
+          </table>
+        </div>
+      </Fold>
+
+      <p className="g1-cli-note">Bird's-eye view — figures match the GSTR-1 JSON. HSN shown rate-wise; expand for line detail. <b>Download formatted Excel</b> for the full client workbook with action points.</p>
     </div>
   );
 }
