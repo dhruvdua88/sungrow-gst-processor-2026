@@ -278,7 +278,10 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   const cdnNums = new Set(einv.cdnr.map((c) => c.nt_num));
 
   // ----- Table 12 (authoritative = portal hsn(b2b)) -----
-  const t12 = einv.hsn.map((h, i) => ({ sr: i + 1, ...h, total: round2(h.txval + h.iamt + h.camt + h.samt + h.csamt) }))
+  // SAC (service) codes start with "99" and MUST use UQC "OTH" — the portal rejects goods
+  // UQCs like PCS on a service row (RET191353 "The UQC entered is not valid").
+  const normUqc = (hsn, uqc) => (/^99/.test(String(hsn)) ? "OTH" : (uqc || "OTH").toUpperCase());
+  const t12 = einv.hsn.map((h, i) => ({ sr: i + 1, ...h, uqc: normUqc(h.hsn, h.uqc), total: round2(h.txval + h.iamt + h.camt + h.samt + h.csamt) }))
     .sort((a, b) => a.hsn.localeCompare(b.hsn) || a.rt - b.rt);
   const t12Txbl = sum(t12, "txval");
   const t12Tax = t12.reduce((a, h) => a + h.iamt + h.camt + h.samt, 0);
@@ -330,6 +333,8 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   add("C2", "Every Table-12 rate is a valid GST slab", "0 invalid", `${badRate.length} ${badRate.slice(0, 6)}`, !badRate.length);
   const badUqc = t12.filter((h) => h.uqc && !VALID_UQC.has(h.uqc.toUpperCase())).map((h) => `${h.hsn}:${h.uqc}`);
   add("C3", "Every UQC is a portal-standard code", "0 invalid", `${badUqc.length} ${badUqc.slice(0, 6)}`, !badUqc.length);
+  const badSacUqc = t12.filter((h) => /^99/.test(h.hsn) && !["OTH", "NA"].includes(String(h.uqc).toUpperCase())).map((h) => `${h.hsn}:${h.uqc}`);
+  add("C3b", "Service SAC (99…) rows use UQC OTH/NA (RET191353)", "0 invalid", `${badSacUqc.length} ${badSacUqc.slice(0, 6)}`, !badSacUqc.length);
   const noDesc = t12.filter((h) => !h.desc).map((h) => h.hsn);
   add("C4", "Every HSN row has a description (mandatory Phase-3)", "0 blank", `${noDesc.length}`, !noDesc.length);
   const arith = t12.filter((h) => { const e = (h.txval * h.rt) / 100; return Math.abs(e - (h.iamt + h.camt + h.samt)) > Math.max(1, e * 0.02); }).map((h) => `${h.hsn}@${h.rt}`);
