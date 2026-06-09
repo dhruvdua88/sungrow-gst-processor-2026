@@ -185,10 +185,82 @@ function parseSales(wb) {
   return out;
 }
 
+// ---------------- bird's-eye summary of the client's working file ----------------
+function fileSummary(wb) {
+  const out = {
+    sales: { invoices: 0, lines: 0, txbl: 0, tax: 0,
+      byRevenue: {}, byShipment: {}, byCustomer: { "Registered (B2B)": blk(), "Unregistered (B2C)": blk() } },
+    foc: { lines: 0, qty: 0, amt: 0 },
+    srv: { lines: 0, dispatches: 0, qty: 0 },
+    support: { summaryRows: 0, stockRows: 0 },
+    sheets: wb.SheetNames.slice(),
+  };
+  function blk() { return { invoices: new Set(), lines: 0, txbl: 0, tax: 0 }; }
+
+  // Sales
+  const sName = findSheet(wb, "Sales");
+  if (sName) {
+    const g = gridOf(wb, sName);
+    let h = headerRow(g, 4, "Invoice no"); if (h < 0) h = 1;
+    const seen = new Set();
+    for (let i = h + 1; i < g.length; i++) {
+      const r = g[i]; if (!r || txt(r[4]) === "") continue;
+      const inv = txt(r[4]), txbl = num(r[17]), tax = num(r[28]);
+      out.sales.lines++; out.sales.txbl += txbl; out.sales.tax += tax; seen.add(inv);
+      const rv = txt(r[26]) || "(blank)";
+      const sh = txt(r[25]) || "(blank)";
+      const isExport = /export|sez/i.test(sh) || /export|sez/i.test(txt(r[26]));
+      const shipKey = isExport ? "Export / SEZ" : (sh || "Domestic");
+      const reg = txt(r[24]).length >= 15 ? "Registered (B2B)" : "Unregistered (B2C)";
+      for (const [bucket, key] of [[out.sales.byRevenue, rv], [out.sales.byShipment, shipKey]]) {
+        const b = (bucket[key] ||= blk());
+        b.lines++; b.txbl += txbl; b.tax += tax; b.invoices.add(inv);
+      }
+      const c = out.sales.byCustomer[reg]; c.lines++; c.txbl += txbl; c.tax += tax; c.invoices.add(inv);
+    }
+    out.sales.invoices = seen.size;
+  }
+  // SRV FOC (free of cost)
+  const focName = findSheet(wb, "SRV FOC", "srvfoc");
+  if (focName) {
+    const g = gridOf(wb, focName);
+    let h = headerRow(g, 0, "Pstng Date"); if (h < 0) h = 2;
+    for (let i = h + 1; i < g.length; i++) {
+      const r = g[i]; if (!r || txt(r[1]) === "") continue;
+      out.foc.lines++; out.foc.qty += num(r[3]); out.foc.amt += num(r[15]);
+    }
+  }
+  // SRV details
+  const srvName = findSheet(wb, "SRV details", "srvdetails");
+  if (srvName) {
+    const g = gridOf(wb, srvName);
+    let h = headerRow(g, 0, "SL No"); if (h < 0) h = 0;
+    const disp = new Set();
+    for (let i = h + 1; i < g.length; i++) {
+      const r = g[i]; if (!r || txt(r[0]) === "") continue;
+      out.srv.lines++; out.srv.qty += num(r[11]); if (txt(r[3])) disp.add(txt(r[3]));
+    }
+    out.srv.dispatches = disp.size;
+  }
+  const countRows = (nm) => { const s = findSheet(wb, nm); if (!s) return 0; const g = gridOf(wb, s); return g.filter((r) => r && r.some((c) => c != null && c !== "")).length; };
+  out.support.summaryRows = countRows("Summary");
+  out.support.stockRows = countRows("Physical stock at WH") || countRows("Physical stock");
+
+  // serialise sets -> counts, round
+  const fin = (b) => ({ invoices: b.invoices.size, lines: b.lines, txbl: round2(b.txbl), tax: round2(b.tax) });
+  out.sales.byRevenue = Object.fromEntries(Object.entries(out.sales.byRevenue).map(([k, v]) => [k, fin(v)]));
+  out.sales.byShipment = Object.fromEntries(Object.entries(out.sales.byShipment).map(([k, v]) => [k, fin(v)]));
+  out.sales.byCustomer = Object.fromEntries(Object.entries(out.sales.byCustomer).map(([k, v]) => [k, fin(v)]));
+  out.sales.txbl = round2(out.sales.txbl); out.sales.tax = round2(out.sales.tax);
+  out.foc.amt = round2(out.foc.amt);
+  return out;
+}
+
 // ---------------- main ----------------
 export function processGstr1(einvWb, salesWb, opts = {}) {
   const einv = parseEinv(einvWb);
   const sales = parseSales(salesWb);
+  const fileOverview = fileSummary(salesWb);
   const errors = [...einv.errors, ...sales.errors];
 
   const gstin = opts.gstin || ""; // supplier GSTIN is taken from the EINV filename by the caller
@@ -282,7 +354,7 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   const portalReady = blockingFails.length === 0;
 
   // ----- GSTR-1 JSON (portal schema) -----
-  const json = buildJson({ gstin, fp, validInv, cdnr: einv.cdnr, t12, t13, version: opts.version || "GST3.1.6" });
+  const json = buildJson({ gstin, fp, validInv, cdnr: einv.cdnr, t12, t13, version: opts.version || "GST3.1.2" });
 
   return {
     meta: { gstin, fp, period: opts.periodLabel || "", entity: opts.entity || Object.values(einv.b2b)[0]?.gstin ? "" : "", supplierName: opts.entity || "" },
@@ -295,6 +367,7 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
     table12: t12, table13: t13,
     cancelled, cdnr: einv.cdnr,
     recon: { missingInSales, valMismatch, nonRevButEinvoiced, salesValidTxbl: round2(salesValidTxbl), portalValidTxbl: round2(validB2bTxbl), diff: round2(salesValidTxbl - validB2bTxbl) },
+    fileOverview,
     checks, fails, blockingFails, allPass, portalReady, errors,
     json,
   };
@@ -341,14 +414,16 @@ function buildJson({ gstin, fp, validInv, cdnr, t12, t13, version }) {
     })),
   }));
 
-  // hsn (Table 12) -> hsn.data[]
-  const hsn = {
-    data: t12.map((h, i) => ({
-      num: i + 1, hsn_sc: h.hsn, desc: h.desc, uqc: (h.uqc || "OTH").toUpperCase(),
-      qty: round2(h.qty), txval: round2(h.txval), rt: h.rt,
-      iamt: round2(h.iamt), camt: round2(h.camt), samt: round2(h.samt), csamt: round2(h.csamt),
-    })),
-  };
+  // hsn (Table 12).
+  // Schema changed on 2025-05-01: periods >= May-2025 use { hsn_b2b, hsn_b2c };
+  // earlier periods use { data }. Description is capped at 30 chars by the portal.
+  const hsnRows = t12.map((h, i) => ({
+    num: i + 1, hsn_sc: h.hsn, desc: String(h.desc || "").slice(0, 30), uqc: (h.uqc || "OTH").toUpperCase(),
+    qty: round2(h.qty), txval: round2(h.txval), rt: h.rt,
+    iamt: round2(h.iamt), camt: round2(h.camt), samt: round2(h.samt), csamt: round2(h.csamt),
+  }));
+  // current scope is B2B-only, so all rows are B2B supplies.
+  const hsn = isBifurcated(fp) ? { hsn_b2b: hsnRows } : { data: hsnRows };
 
   // doc_issue (Table 13)
   const doc_issue = {
@@ -364,6 +439,13 @@ function buildJson({ gstin, fp, validInv, cdnr, t12, t13, version }) {
   obj.hsn = hsn;
   obj.doc_issue = doc_issue;
   return obj;
+}
+// Table-12 HSN B2B/B2C bifurcation applies to filing periods on/after May 2025.
+function isBifurcated(fp) {
+  const m = /^(\d{2})(\d{4})$/.exec(String(fp || ""));
+  if (!m) return true; // default to current (bifurcated) shape
+  const mm = +m[1], yyyy = +m[2];
+  return yyyy > 2025 || (yyyy === 2025 && mm >= 5);
 }
 function mapInvType(t) {
   const s = (t || "").toLowerCase();

@@ -73,3 +73,19 @@
 .g1-note.bad { border-left-color: #ef4444; background: #fef2f2; }
 
 .g1-json { background: #0f172a; color: #cbd5e1; font-family: ui-monospace, monospace; font-size: 12px; padding: 14px; border-radius: 10px; max-height: 520px; overflow: auto; }
+
+/* File Overview */
+.g1-ov-h { font-size: 16px; color: #0f2c52; margin: 0 0 12px; }
+.g1-ov-h span { font-weight: 500; font-size: 13px; color: #64748b; }
+.g1-ov-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+.g1-ov-block { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
+.g1-ov-bt { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #475569; margin-bottom: 6px; }
+.g1-table.compact th { padding: 5px 7px; font-size: 11px; }
+.g1-table.compact td { padding: 4px 7px; font-size: 12px; }
+.g1-ov-note { font-size: 11px; color: #64748b; margin: 6px 0 0; line-height: 1.35; }
+.g1-ov-extra { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 12px; }
+.g1-ov-pill { background: #eff6ff; border: 1px solid #dbeafe; border-radius: 10px; padding: 10px 14px; }
+.g1-ov-pill.excl { background: #fef9c3; border-color: #fde68a; }
+.g1-ov-pill span { display: block; font-size: 11px; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+.g1-ov-pill b { display: block; font-size: 14px; color: #0f2c52; margin-top: 3px; }
+.g1-ov-foot { font-size: 12px; color: #475569; background: #f0fdf4; border-left: 3px solid #22c55e; padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 12px 0 0; }

@@ -54,6 +54,47 @@ function Cards({ res }) {
   );
 }
 
+function OvBucket({ title, map, note }) {
+  return (
+    <div className="g1-ov-block">
+      <div className="g1-ov-bt">{title}</div>
+      <table className="g1-table compact">
+        <thead><tr><th className="left">Category</th><th className="num">Invoices</th><th className="num">Lines</th><th className="num">Taxable</th><th className="num">Tax</th></tr></thead>
+        <tbody>
+          {Object.entries(map).map(([k, v]) => (
+            <tr key={k} className={/non-?revenue/i.test(k) ? "row-warn" : ""}>
+              <td className="left">{k}</td><td className="num">{v.invoices}</td><td className="num">{v.lines}</td><td className="num">{inr(v.txbl)}</td><td className="num">{v.tax ? inr(v.tax) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {note && <p className="g1-ov-note">{note}</p>}
+    </div>
+  );
+}
+
+function FileOverview({ res }) {
+  const f = res.fileOverview;
+  const cr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  return (
+    <section className="g1-card g1-ov">
+      <h3 className="g1-ov-h">📋 File Overview — what the client sent <span>({f.sales.invoices} invoices · {f.sales.lines} lines in “Sales” · {cr(f.sales.txbl)} taxable)</span></h3>
+      <div className="g1-ov-grid">
+        <OvBucket title="By Type of Revenue" map={f.sales.byRevenue}
+          note="Yes-Revenue = booked revenue. Non-Revenue = billed but revenue deferred (still in GSTR-1 if e-invoiced)." />
+        <OvBucket title="By Shipment" map={f.sales.byShipment} note={f.sales.byShipment["Export / SEZ"] ? "Export/SEZ present — handled in the exports module (planned)." : "All domestic this period — no exports/SEZ."} />
+        <OvBucket title="By Customer Type" map={f.sales.byCustomer} note={f.sales.byCustomer["Unregistered (B2C)"]?.invoices ? "B2C present — handled in the B2C module (planned)." : "All registered (B2B) this period — no B2C."} />
+      </div>
+      <div className="g1-ov-extra">
+        <div className="g1-ov-pill excl"><span>SRV FOC — free of cost (EXCLUDED, not uploaded)</span><b>{f.foc.lines} lines · qty {Math.abs(f.foc.qty).toLocaleString("en-IN")} · LC {cr(Math.abs(f.foc.amt))}</b></div>
+        <div className="g1-ov-pill"><span>SRV details — service dispatches</span><b>{f.srv.lines} lines · {f.srv.dispatches} dispatches</b></div>
+        <div className="g1-ov-pill"><span>Support sheets</span><b>Summary {f.support.summaryRows} · Physical stock {f.support.stockRows}</b></div>
+      </div>
+      <p className="g1-ov-foot">→ Of this file, only valid B2B e-invoices (incl. Non-Revenue ones carrying an IRN) flow to GSTR-1. FOC service replacements have no billing and are excluded. Sheets read: {f.sheets.join(", ")}.</p>
+    </section>
+  );
+}
+
 function ChecksTable({ res }) {
   return (
     <table className="g1-table checks">
@@ -172,6 +213,7 @@ export default function Gstr1Processor() {
   const [salesFile, setSalesFile] = useState(null);
   const [month, setMonth] = useState(4); // May (0-based)
   const [year, setYear] = useState(2026);
+  const [version, setVersion] = useState("GST3.1.2"); // JSON schema version; match your Offline Tool if portal rejects
   const [running, setRunning] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
@@ -188,7 +230,7 @@ export default function Gstr1Processor() {
       const einvWb = XLSX.read(eBuf, { type: "array", cellDates: true });
       const salesWb = XLSX.read(sBuf, { type: "array", cellDates: true });
       const gstin = (einvFile.name.match(GSTIN_RE) || [])[1] || "";
-      const out = processGstr1(einvWb, salesWb, { gstin, fp, periodLabel: `${MONTHS[month]} ${year}` });
+      const out = processGstr1(einvWb, salesWb, { gstin, fp, version: version.trim() || "GST3.1.2", periodLabel: `${MONTHS[month]} ${year}` });
       if (out.errors.length) setErr(out.errors.join(" "));
       setRes(out);
     } catch (e) {
@@ -223,7 +265,12 @@ export default function Gstr1Processor() {
           <select value={month} onChange={(e) => setMonth(+e.target.value)}>{MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}</select>
           <input type="number" value={year} onChange={(e) => setYear(+e.target.value)} style={{ width: 90 }} />
           <span className="g1-fp">fp = {fp}</span>
+          <label style={{ marginLeft: 16 }}>JSON version</label>
+          <input value={version} onChange={(e) => setVersion(e.target.value)} style={{ width: 110 }} title="Schema version written into the JSON. If the portal rejects, match the value your current Offline Tool emits." />
         </div>
+        <p className="g1-ov-note" style={{ margin: "2px 0 0 240px" }}>
+          HSN section auto-bifurcates into <code>hsn_b2b</code>/<code>hsn_b2c</code> for periods from May-2025 (portal rule). If the portal still rejects, open a JSON the current Offline Tool generates and copy its <code>version</code> string here.
+        </p>
         <button className="g1-run" onClick={run} disabled={running}>{running ? "Processing…" : "Process GSTR-1"}</button>
         {err && <p className="g1-err">{err}</p>}
       </section>
@@ -231,6 +278,7 @@ export default function Gstr1Processor() {
       {res && (
         <>
           <Banner res={res} />
+          <FileOverview res={res} />
           <Cards res={res} />
           <section className="g1-card">
             <div className="g1-actions">
