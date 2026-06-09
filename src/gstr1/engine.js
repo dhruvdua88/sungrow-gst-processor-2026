@@ -353,10 +353,12 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   // Partition every Sales-book invoice into ONE mutually-exclusive bucket (no double counting).
   const validSet = new Set(validInv.map((d) => d.inum));
   const cancelledSet = new Set(cancelled);
+  const cdnSet = new Set(einv.cdnr.map((c) => c.nt_num));
   const isRegistered = (inv) => [...inv.gstin].some((g) => String(g).replace(/\s/g, "").length >= 15);
-  let b2cBook = 0, exportBook = 0, cancelledBook = 0, notEinvBook = 0;
+  let b2cBook = 0, exportBook = 0, cancelledBook = 0, notEinvBook = 0, cdnInBook = 0;
   for (const inv of Object.values(sales.inv)) {
     if (validSet.has(inv.inum)) continue;          // valid B2B → captured in salesValidTxbl
+    if (cdnSet.has(inv.inum) || inv.txbl < 0) { cdnInBook += inv.txbl; continue; } // credit/debit note already in books (Table 12 already net of it)
     if (cancelledSet.has(inv.inum)) { cancelledBook += inv.txbl; continue; }
     if (inv.export) { exportBook += inv.txbl; continue; }
     if (!isRegistered(inv)) { b2cBook += inv.txbl; continue; }
@@ -372,10 +374,10 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
     table12Txbl: round2(t12Txbl),
     less: {
       b2c: round2(b2cBook), export: round2(exportBook), cancelled: round2(cancelledBook),
-      notEinvoiced: round2(notEinvBook), bookVsPortalAdj: round2(bookVsPortalAdj), cdn: round2(cdnTxbl),
+      notEinvoiced: round2(notEinvBook), cdnInBook: round2(cdnInBook), bookVsPortalAdj: round2(bookVsPortalAdj), cdn: round2(cdnTxbl),
     },
     portalSupportTxbl: round2(portalSupportTxbl),
-    residual: round2(salesSheetTxbl - b2cBook - exportBook - cancelledBook - notEinvBook - bookVsPortalAdj - cdnTxbl - portalSupportTxbl),
+    residual: round2(salesSheetTxbl - b2cBook - exportBook - cancelledBook - notEinvBook - cdnInBook - bookVsPortalAdj - cdnTxbl - portalSupportTxbl),
   };
 
   // ----- validation checks -----
@@ -396,7 +398,7 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   const badGoodsQty = t12.filter((h) => !/^99/.test(h.hsn) && round2(h.qty) <= 0).map((h) => h.hsn);
   add("C3e", "Goods (non-99) rows have qty > 0", "0 invalid", `${badGoodsQty.length} ${badGoodsQty.slice(0, 6)}`, !badGoodsQty.length);
   const noDesc = t12.filter((h) => !h.desc).map((h) => h.hsn);
-  add("C4", "Every HSN row has a description (mandatory Phase-3)", "0 blank", `${noDesc.length}`, !noDesc.length);
+  add("C4", "Every HSN row has a description (mandatory Phase-3)", "0 blank", `${noDesc.length} ${noDesc.slice(0, 6)}`, !noDesc.length);
   const arith = t12.filter((h) => { const e = (h.txval * h.rt) / 100; return Math.abs(e - (h.iamt + h.camt + h.samt)) > Math.max(1, e * 0.02); }).map((h) => `${h.hsn}@${h.rt}`);
   add("C5", "Per-row tax == taxable × rate (±2% rounding)", "0 breaks", `${arith.length} ${arith.slice(0, 6)}`, !arith.length);
   const csBreak = t12.filter((h) => Math.abs(h.camt - h.samt) > 1).map((h) => h.hsn);
@@ -410,6 +412,7 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   add("C13", "Every valid e-invoice present in client Sales book", "0 missing", `${missingInSales.length} ${missingInSales.slice(0, 6)}`, !missingInSales.length);
   add("C14", "Per-invoice taxable: client book == portal e-invoice", "0 mismatch", `${valMismatch.length} ${valMismatch.slice(0, 4).map((m) => m.inum)}`, !valMismatch.length);
   add("C15", "Sales sheet fully reconciles to Table 12 (bridge residual 0)", "₹0", fmt(bridge.residual), Math.abs(bridge.residual) < 1);
+  add("C16", "Table 12 is net of credit/debit notes (all portal CN/DN are in the sales sheet)", "₹0 unmatched", fmt(cdnInBook + cdnTxbl), Math.abs(cdnInBook + cdnTxbl) < 2);
 
   const fails = checks.filter((c) => !c.ok);
   const blocking = new Set(["C1", "C2", "C3", "C7", "C8", "C10"]); // portal-blocking vs deviation-only
@@ -430,6 +433,11 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
     totals: { t12Txbl: round2(t12Txbl), t12Igst: round2(sum(t12, "iamt")), t12Cgst: round2(sum(t12, "camt")), t12Sgst: round2(sum(t12, "samt")), t12Cess: round2(sum(t12, "csamt")), validB2bTxbl: round2(validB2bTxbl), cdnTxbl: round2(cdnTxbl), salesValidTxbl: round2(salesValidTxbl) },
     table12: t12, table13: t13, bridge,
     cancelled, cdnr: einv.cdnr,
+    cancelledDetail: cancelled.map((inum) => ({
+      inum, name: sales.inv[inum]?.name || einv.b2b[inum]?.name || "",
+      gstin: sales.inv[inum] ? [...sales.inv[inum].gstin][0] || "" : (einv.b2b[inum]?.gstin || ""),
+      txbl: round2(sales.inv[inum]?.txbl || 0), portalStatus: einv.b2b[inum]?.status || "",
+    })).sort((a, b) => b.txbl - a.txbl),
     recon: { missingInSales, valMismatch, nonRevButEinvoiced, salesValidTxbl: round2(salesValidTxbl), portalValidTxbl: round2(validB2bTxbl), diff: round2(salesValidTxbl - validB2bTxbl) },
     fileOverview,
     checks, fails, blockingFails, allPass, portalReady, errors,

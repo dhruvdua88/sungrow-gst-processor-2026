@@ -115,4 +115,10 @@
 .g1-cli-note { font-size: 12px; color: #475569; background: #f8fafc; border-left: 3px solid #0ea5e9; padding: 9px 13px; border-radius: 0 8px 8px 0; margin: 14px 0 0; line-height: 1.5; }
 .g1-br td { font-size: 13px; }
 .g1-br-zero td { color: #94a3b8; }
+.g1-cli-block { border-radius: 12px; padding: 12px 16px; margin: 14px 0; font-size: 13px; line-height: 1.5; }
+.g1-cli-block.bad { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
+.g1-cli-block.warn { background: #fffbeb; border: 1px solid #fde68a; color: #78350f; }
+.g1-cli-block ul { margin: 8px 0 0; padding-left: 20px; }
+.g1-cli-block li { margin: 4px 0; }
+.g1-cli-found { color: #b91c1c; font-family: ui-monospace, monospace; font-size: 12px; }
 @media (max-width: 720px) { .g1-cli-kpis { grid-template-columns: repeat(2,1fr); } }

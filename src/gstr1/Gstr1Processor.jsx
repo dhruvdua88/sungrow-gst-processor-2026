@@ -202,150 +202,226 @@ async function buildExcel(res) {
   return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 
-// Beautifully formatted, client-facing workbook (distinct from the internal validation one).
+// Multi-sheet, hyperlinked client workbook: Action Points cover + detailed working sheets.
 async function buildClientExcel(res) {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Sungrow GST Processor 2026";
   const BRAND = "FF1E4E8C", ACCENT = "FF0EA5E9", LIGHT = "FFEFF6FF", BAND = "FFF6FAFF", INK = "FF0F2C52";
-  const ws = wb.addWorksheet("GSTR-1 Summary", { views: [{ showGridLines: false }] });
-  ws.columns = [
-    { width: 5 }, { width: 12 }, { width: 40 }, { width: 7 }, { width: 12 }, { width: 8 },
-    { width: 17 }, { width: 15 }, { width: 14 }, { width: 14 }, { width: 11 }, { width: 17 },
-  ];
+  const RED = "FFFEE2E2", AMBER = "FFFEF3C7", GREEN = "FFDCFCE7";
   const MONEY = "#,##0.00";
   const thin = { style: "thin", color: { argb: "FFD9E2EC" } };
   const border = { top: thin, left: thin, bottom: thin, right: thin };
   const fill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
-  const COL = (n) => ws.getColumn(n).letter;
-
   const t = res.totals;
   const totalTax = (t.t12Igst || 0) + (t.t12Cgst || 0) + (t.t12Sgst || 0) + (t.t12Cess || 0);
   const totalVal = (t.t12Txbl || 0) + totalTax;
+  const f = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // Title + subtitle banner
-  ws.mergeCells("A1:L1");
-  const title = ws.getCell("A1");
-  title.value = "GSTR-1  ·  OUTWARD SUPPLIES SUMMARY";
-  title.font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } };
-  title.alignment = { vertical: "middle", indent: 1 };
-  title.fill = fill(BRAND);
-  ws.getRow(1).height = 34;
-  ws.mergeCells("A2:L2");
-  const sub = ws.getCell("A2");
-  sub.value = `${res.meta.supplierName ? res.meta.supplierName + "   ·   " : ""}GSTIN ${res.meta.gstin || "—"}      Return Period: ${res.meta.period || res.meta.fp}`;
-  sub.font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
-  sub.alignment = { vertical: "middle", indent: 1 };
-  sub.fill = fill(ACCENT);
-  ws.getRow(2).height = 22;
-
-  // KPI bands
-  const band = (labelRow, items) => {
-    const per = 12 / items.length;
-    let col = 1;
-    ws.getRow(labelRow).height = 16;
-    ws.getRow(labelRow + 1).height = 24;
-    for (const it of items) {
-      const c1 = COL(col), c2 = COL(col + per - 1);
-      ws.mergeCells(`${c1}${labelRow}:${c2}${labelRow}`);
-      ws.mergeCells(`${c1}${labelRow + 1}:${c2}${labelRow + 1}`);
-      const L = ws.getCell(`${c1}${labelRow}`);
-      L.value = it.label; L.alignment = { horizontal: "center", vertical: "middle" };
-      L.font = { bold: true, size: 9, color: { argb: "FF64748B" } };
-      L.fill = fill(LIGHT); L.border = border;
-      const V = ws.getCell(`${c1}${labelRow + 1}`);
-      V.value = it.value; V.alignment = { horizontal: "center", vertical: "middle" };
-      V.font = { bold: true, size: 13, color: { argb: INK } };
-      V.fill = fill(it.accent ? "FFE0F2FE" : "FFFFFFFF"); V.border = border;
-      if (it.fmt) V.numFmt = it.fmt;
-      col += per;
-    }
+  // ---- per-sheet helpers ----
+  const banner = (ws, span, text, sub2) => {
+    ws.mergeCells(`A1:${span}1`);
+    const c = ws.getCell("A1");
+    c.value = text; c.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+    c.alignment = { vertical: "middle", indent: 1 }; c.fill = fill(BRAND); ws.getRow(1).height = 30;
+    ws.mergeCells(`A2:${span}2`);
+    const s = ws.getCell("A2");
+    s.value = sub2; s.font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+    s.alignment = { vertical: "middle", indent: 1 }; s.fill = fill(ACCENT); ws.getRow(2).height = 20;
+    ws.addRow([]);
   };
-  band(4, [
-    { label: "TAXABLE VALUE", value: t.t12Txbl, fmt: MONEY }, { label: "IGST", value: t.t12Igst, fmt: MONEY },
-    { label: "CGST", value: t.t12Cgst, fmt: MONEY }, { label: "SGST", value: t.t12Sgst, fmt: MONEY },
-    { label: "CESS", value: t.t12Cess, fmt: MONEY }, { label: "TOTAL TAX", value: totalTax, fmt: MONEY },
-  ]);
-  band(7, [
-    { label: "TOTAL INVOICE VALUE", value: totalVal, fmt: MONEY, accent: true },
-    { label: "VALID E-INVOICES", value: res.counts.validInvoices },
-    { label: "HSN / SAC LINES", value: res.counts.hsnRows },
-    { label: "CREDIT NOTES", value: res.counts.cdnr },
-  ]);
-
-  const sectionTitle = (text) => {
+  const sectionTitle = (ws, span, text) => {
     const r = ws.addRow([text]);
-    ws.mergeCells(`A${r.number}:L${r.number}`);
+    ws.mergeCells(`A${r.number}:${span}${r.number}`);
     const c = r.getCell(1);
     c.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    c.fill = fill(ACCENT); c.alignment = { vertical: "middle", indent: 1 };
-    r.height = 22;
+    c.fill = fill(ACCENT); c.alignment = { vertical: "middle", indent: 1 }; r.height = 22;
   };
-  const headerRow = (cells) => {
+  const headerRow = (ws, cells) => {
     const r = ws.addRow(cells);
     r.eachCell((c) => { c.fill = fill(BRAND); c.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } }; c.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; c.border = border; });
-    r.height = 24;
+    r.height = 24; return r;
+  };
+  const dataRow = (ws, cells, i, moneyCols = []) => {
+    const r = ws.addRow(cells);
+    r.eachCell((c) => { c.border = border; if (i % 2) c.fill = fill(BAND); });
+    moneyCols.forEach((col) => (r.getCell(col).numFmt = MONEY));
     return r;
   };
+  const link = (sheet) => ({ text: `→ ${sheet}`, hyperlink: `#'${sheet}'!A1` });
 
+  const SH = { action: "Action Points", summary: "Summary", recon: "Reconciliation", t12: "Table 12 HSN", t13: "Table 13 Docs", canc: "Cancelled Invoices", dev: "Deviations", checks: "Checks" };
+
+  // ===== Build the issue / action-point list =====
+  const cancTot = (res.cancelledDetail || []).reduce((a, c) => a + c.txbl, 0);
+  const actionFor = (id) => ({
+    C1: "Fix the HSN/SAC code in the sales sheet (must be numeric, 6 or 8 digits). JSON is BLOCKED until corrected.",
+    C2: "Correct the GST rate to a valid slab. JSON BLOCKED until fixed.",
+    C3: "Use a portal-standard UQC. JSON BLOCKED until fixed.",
+    C4: "Add the HSN description (portal Phase-3 mandatory).",
+    C5: "Recheck tax = taxable × rate for the flagged HSN.",
+    C6: "Make CGST = SGST on the flagged intra-state HSN.",
+    C13: "Add the missing e-invoice(s) to the sales sheet (possible omission).",
+    C14: "Confirm the correct taxable value with the client (book vs portal differ).",
+    C16: "A portal credit/debit note is not reflected in the sales sheet — Table 12 may not be net of CDN.",
+  }[id] || "Review and resolve with the client.");
+  const whereFor = (id) => (["C9"].includes(id) ? SH.canc : ["C13", "C14"].includes(id) ? SH.dev : ["C7", "C8", "C15", "C16"].includes(id) ? SH.recon : ["C10", "C11"].includes(id) ? SH.t13 : SH.t12);
+  const issues = [];
+  for (const c of res.checks) {
+    if (c.ok) continue;
+    const blocker = res.blockingFails.includes(c);
+    issues.push({ sev: blocker ? "BLOCKER" : "REVIEW", area: c.id, issue: c.desc, detail: `Found: ${c.actual}`, where: whereFor(c.id), action: actionFor(c.id) });
+  }
+  if ((res.cancelledDetail || []).length) {
+    issues.push({ sev: "CONFIRM", area: "Cancelled", issue: `${res.cancelledDetail.length} invoice(s) in the sales sheet but IRN cancelled on the portal`, detail: `₹${f(cancTot)} — ${res.cancelledDetail.slice(0, 3).map((c) => `${c.inum} ${c.name}`).join("; ")}`, where: SH.canc, action: "Confirm with client: remove from GSTR-1 (sale not done) or it was re-billed under a new number." });
+  }
+  const sevRank = { BLOCKER: 0, CONFIRM: 1, REVIEW: 2, INFO: 3 };
+  issues.sort((a, b) => sevRank[a.sev] - sevRank[b.sev]);
+  const sevFill = { BLOCKER: RED, CONFIRM: AMBER, REVIEW: AMBER, INFO: LIGHT };
+
+  // ===== Sheet 1: ACTION POINTS (cover) =====
+  const a = wb.addWorksheet(SH.action, { views: [{ showGridLines: false }] });
+  a.columns = [{ width: 12 }, { width: 14 }, { width: 46 }, { width: 50 }, { width: 16 }, { width: 60 }];
+  banner(a, "F", "GSTR-1 — ACTION POINTS & ISSUES", `${res.meta.supplierName ? res.meta.supplierName + "   ·   " : ""}GSTIN ${res.meta.gstin || "—"}      Return Period: ${res.meta.period || res.meta.fp}`);
+  const statusRow = a.addRow([res.portalReady ? "JSON READY TO GENERATE" : "JSON BLOCKED — FIX BLOCKERS FIRST"]);
+  a.mergeCells(`A${statusRow.number}:F${statusRow.number}`);
+  statusRow.getCell(1).font = { bold: true, size: 13, color: { argb: res.portalReady ? "FF166534" : "FF991B1B" } };
+  statusRow.getCell(1).fill = fill(res.portalReady ? GREEN : RED);
+  statusRow.getCell(1).alignment = { vertical: "middle", indent: 1 }; statusRow.height = 24;
+  const cnt = (s) => issues.filter((i) => i.sev === s).length;
+  const sline = a.addRow([`${cnt("BLOCKER")} blocker(s) · ${cnt("CONFIRM")} to confirm · ${cnt("REVIEW")} to review · ${res.checks.filter((c) => c.ok).length}/${res.checks.length} checks passed`]);
+  a.mergeCells(`A${sline.number}:F${sline.number}`); sline.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
+  a.addRow([]);
+  sectionTitle(a, "F", "WHAT NEEDS ACTION");
+  headerRow(a, ["Severity", "Ref", "Issue", "Detail", "Where", "What to do"]);
+  if (!issues.length) { const r = a.addRow(["—", "", "No issues. Return is clean.", "", "", ""]); r.getCell(3).font = { bold: true, color: { argb: "FF166534" } }; }
+  issues.forEach((it, i) => {
+    const r = a.addRow([it.sev, it.area, it.issue, it.detail, "", it.action]);
+    r.eachCell((c) => { c.border = border; c.alignment = { vertical: "top", wrapText: true }; });
+    r.getCell(1).fill = fill(sevFill[it.sev]); r.getCell(1).font = { bold: true, color: { argb: it.sev === "BLOCKER" ? "FF991B1B" : "FF92400E" } };
+    const lk = r.getCell(5); lk.value = link(it.where); lk.font = { color: { argb: "FF0369A1" }, underline: true };
+    if (i % 2) [2, 3, 4, 6].forEach((col) => (r.getCell(col).fill = fill(BAND)));
+  });
+  a.addRow([]);
+  sectionTitle(a, "F", "WORKBOOK INDEX");
+  [[SH.summary, "Headline figures & tax split"], [SH.recon, "Sales sheet ↔ e-invoice reconciliation bridge"], [SH.t12, "Table 12 — full HSN/SAC summary (the books)"], [SH.t13, "Table 13 — documents issued"], [SH.canc, "Invoices cancelled on portal but in the books"], [SH.dev, "Per-invoice deviations (book vs portal)"], [SH.checks, "All 16 validation checks"]].forEach(([s, d], i) => {
+    const r = a.addRow(["", "", { text: s, hyperlink: `#'${s}'!A1` }, d, "", ""]);
+    r.getCell(3).font = { color: { argb: "FF0369A1" }, underline: true, bold: true };
+    r.getCell(4).font = { color: { argb: "FF475569" } };
+    if (i % 2) r.eachCell((c) => (c.fill = fill(BAND)));
+  });
+
+  // ===== Sheet 2: SUMMARY =====
+  const s = wb.addWorksheet(SH.summary, { views: [{ showGridLines: false }] });
+  s.columns = [{ width: 30 }, { width: 26 }, { width: 30 }, { width: 26 }];
+  banner(s, "D", "GSTR-1 — SUMMARY", `Return Period ${res.meta.period || res.meta.fp}   ·   ${link(SH.action).text.replace("→ ", "back to ")}`);
+  s.getCell("C2").value = link(SH.action); s.getCell("C2").font = { color: { argb: "FFFFFFFF" }, underline: true };
+  const kv = (label, value, money) => { const r = s.addRow([label, value, "", ""]); r.getCell(1).font = { bold: true, color: { argb: INK } }; if (money) r.getCell(2).numFmt = MONEY; r.getCell(1).fill = fill(LIGHT); r.eachCell((c) => (c.border = border)); };
+  kv("Status", res.portalReady ? (res.allPass ? "ALL CHECKS PASSED" : "PORTAL-VALID — deviations to resolve") : "BLOCKING FAILURES — JSON blocked");
+  kv("Checks passed", `${res.checks.filter((c) => c.ok).length} / ${res.checks.length}`);
+  kv("Table 12 taxable (= sales sheet)", t.t12Txbl, true);
+  kv("IGST", t.t12Igst, true); kv("CGST", t.t12Cgst, true); kv("SGST", t.t12Sgst, true); kv("Cess", t.t12Cess, true);
+  kv("Total tax", totalTax, true); kv("Total invoice value", totalVal, true);
+  kv("Valid e-invoices", res.counts.validInvoices); kv("Cancelled IRNs", res.cancelled.join(", ") || "none");
+  kv("Credit/Debit notes", res.counts.cdnr);
+
+  // ===== Sheet 3: RECONCILIATION =====
   if (res.bridge) {
     const b = res.bridge;
-    ws.addRow([]);
-    sectionTitle("TABLE 12 (= SALES SHEET)  →  E-INVOICE SUPPORT RECONCILIATION");
+    const rc = wb.addWorksheet(SH.recon, { views: [{ showGridLines: false }] });
+    rc.columns = [{ width: 4 }, { width: 50 }, { width: 22 }, { width: 56 }];
+    banner(rc, "D", "TABLE 12 (= SALES SHEET) → E-INVOICE SUPPORT", "Books are the base; the e-invoice dump is the cross-check.");
+    rc.getCell("C2").value = link(SH.action); rc.getCell("C2").font = { color: { argb: "FFFFFFFF" }, underline: true };
     const brRow = (label, amount, note, kind) => {
-      const r = ws.addRow([]);
-      ws.mergeCells(`B${r.number}:H${r.number}`);
-      ws.mergeCells(`I${r.number}:K${r.number}`);
-      r.getCell(2).value = label;
-      r.getCell(9).value = note || "";
-      r.getCell(12).value = amount; r.getCell(12).numFmt = MONEY;
-      r.getCell(9).font = { size: 9, italic: true, color: { argb: "FF94A3B8" } };
+      const r = rc.addRow(["", label, amount, note || ""]);
+      r.getCell(3).numFmt = MONEY;
+      r.getCell(4).font = { size: 9, italic: true, color: { argb: "FF94A3B8" } };
       const strong = kind === "base" || kind === "result";
       r.getCell(2).font = { bold: strong, color: { argb: INK } };
-      r.getCell(12).font = { bold: strong, color: { argb: INK } };
-      if (strong) [2, 9, 12].forEach((c) => (r.getCell(c).fill = fill(LIGHT)));
-      if (kind === "residual" && Math.abs(amount) >= 1) [2, 12].forEach((c) => (r.getCell(c).fill = fill("FFFEE2E2")));
-      [2, 9, 12].forEach((c) => (r.getCell(c).border = border));
+      r.getCell(3).font = { bold: strong, color: { argb: INK } };
+      if (strong) [2, 3, 4].forEach((c) => (r.getCell(c).fill = fill(LIGHT)));
+      if (kind === "residual" && Math.abs(amount) >= 1) [2, 3].forEach((c) => (r.getCell(c).fill = fill(RED)));
+      [2, 3, 4].forEach((c) => (r.getCell(c).border = border));
     };
-    brRow("Table 12 = Client Sales Sheet — taxable (BASE)", b.table12Txbl, "books drive Table 12", "base");
+    brRow("Table 12 = Client Sales Sheet — taxable (BASE)", b.table12Txbl, "books drive Table 12; net of CDN already in the sheet", "base");
     brRow("less: B2C supplies", -b.less.b2c, "in Table 12 (hsn_b2c); not in B2B e-invoices");
     brRow("less: Exports / SEZ", -b.less.export, "in Table 12; reported via 6A separately");
-    brRow("less: Cancelled invoices", -b.less.cancelled, "still in sales sheet; no IRN");
+    brRow("less: Cancelled invoices", -b.less.cancelled, "in sales sheet; IRN cancelled on portal");
     brRow("less: Registered B2B not e-invoiced", -b.less.notEinvoiced, "book-only — investigate omission");
-    brRow("less: Book vs portal value differences", -b.less.bookVsPortalAdj, "per-invoice mismatches (C14)");
-    brRow("less: Credit / Debit notes", -b.less.cdn, "support nets these; Table 12 does not");
+    brRow("add back: credit/debit notes in books", -b.less.cdnInBook, "Table 12 already net of these");
+    brRow("less: Book vs portal value differences", -b.less.bookVsPortalAdj, "per-invoice mismatches (see Deviations)");
+    brRow("less: Credit/Debit notes (portal)", -b.less.cdn, "portal support also nets these");
     brRow("= Portal valid B2B e-invoices (SUPPORT)", b.portalSupportTxbl, "cross-check figure", "result");
     brRow("Unreconciled residual", b.residual, Math.abs(b.residual) < 1 ? "fully reconciled" : "INVESTIGATE", "residual");
   }
 
-  ws.addRow([]);
-  sectionTitle("HSN / SAC SUMMARY  —  Table 12");
-  headerRow(["Sr", "HSN/SAC", "Description", "UQC", "Qty", "Rate %", "Taxable", "IGST", "CGST", "SGST", "Cess", "Total"]);
+  // ===== Sheet 4: TABLE 12 HSN =====
+  const h12 = wb.addWorksheet(SH.t12, { views: [{ state: "frozen", ySplit: 4, showGridLines: false }] });
+  h12.columns = [{ width: 5 }, { width: 12 }, { width: 38 }, { width: 7 }, { width: 12 }, { width: 8 }, { width: 17 }, { width: 15 }, { width: 14 }, { width: 14 }, { width: 11 }, { width: 17 }];
+  banner(h12, "L", "TABLE 12 — HSN / SAC SUMMARY (from the sales sheet)", "Taxable/tax/qty from the books; UQC & description enriched from e-invoice support.");
+  headerRow(h12, ["Sr", "HSN/SAC", "Description", "UQC", "Qty", "Rate %", "Taxable", "IGST", "CGST", "SGST", "Cess", "Total"]);
   res.table12.forEach((h, i) => {
-    const r = ws.addRow([h.sr, h.hsn, h.desc, h.uqc, h.qty, h.rt, h.txval, h.iamt, h.camt, h.samt, h.csamt, h.total]);
-    r.eachCell((c) => { c.border = border; if (i % 2) c.fill = fill(BAND); });
-    r.getCell(3).alignment = { wrapText: true };
-    r.getCell(5).numFmt = "#,##0";
-    r.getCell(6).numFmt = "0.00";
-    [7, 8, 9, 10, 11, 12].forEach((col) => (r.getCell(col).numFmt = MONEY));
+    const r = dataRow(h12, [h.sr, h.hsn, h.desc, h.uqc, h.qty, h.rt, h.txval, h.iamt, h.camt, h.samt, h.csamt, h.total], i, [7, 8, 9, 10, 11, 12]);
+    r.getCell(3).alignment = { wrapText: true }; r.getCell(5).numFmt = "#,##0"; r.getCell(6).numFmt = "0.00";
+    if (!h.desc) r.getCell(3).fill = fill(AMBER); // flag blank description (C4)
+    if (!/^\d{6}$|^\d{8}$/.test(String(h.hsn))) r.getCell(2).fill = fill(RED); // flag bad HSN code (C1)
   });
-  const tr = ws.addRow(["", "TOTAL", "", "", "", "", t.t12Txbl, t.t12Igst, t.t12Cgst, t.t12Sgst, t.t12Cess, totalVal]);
+  const tr = h12.addRow(["", "TOTAL", "", "", "", "", t.t12Txbl, t.t12Igst, t.t12Cgst, t.t12Sgst, t.t12Cess, totalVal]);
   tr.eachCell((c) => { c.font = { bold: true, color: { argb: INK } }; c.fill = fill(LIGHT); c.border = border; });
   [7, 8, 9, 10, 11, 12].forEach((col) => (tr.getCell(col).numFmt = MONEY));
 
-  ws.addRow([]);
-  sectionTitle("DOCUMENTS ISSUED  —  Table 13");
-  headerRow(["Code", "Nature of Document", "From", "To", "Total", "Cancelled", "Net"]);
-  res.table13.forEach((d, i) => {
-    const r = ws.addRow([d.code, d.nature, d.from, d.to, d.total, d.cancel, d.net]);
-    r.eachCell((c) => { c.border = border; if (i % 2) c.fill = fill(BAND); });
+  // ===== Sheet 5: TABLE 13 DOCS =====
+  const d13 = wb.addWorksheet(SH.t13, { views: [{ showGridLines: false }] });
+  d13.columns = [{ width: 7 }, { width: 34 }, { width: 16 }, { width: 16 }, { width: 10 }, { width: 11 }, { width: 10 }];
+  banner(d13, "G", "TABLE 13 — DOCUMENTS ISSUED", `Return Period ${res.meta.period || res.meta.fp}`);
+  headerRow(d13, ["Code", "Nature of Document", "From", "To", "Total", "Cancelled", "Net"]);
+  res.table13.forEach((d, i) => dataRow(d13, [d.code, d.nature, d.from, d.to, d.total, d.cancel, d.net], i));
+
+  // ===== Sheet 6: CANCELLED INVOICES =====
+  const cs = wb.addWorksheet(SH.canc, { views: [{ showGridLines: false }] });
+  cs.columns = [{ width: 16 }, { width: 40 }, { width: 20 }, { width: 18 }, { width: 16 }, { width: 40 }];
+  banner(cs, "F", "CANCELLED INVOICES — confirm with client", "In the sales sheet (so in Table 12) but IRN cancelled on the portal. Remove if the sale didn't happen / was re-billed.");
+  headerRow(cs, ["Invoice", "Recipient", "GSTIN", "Book taxable", "Portal status", "Action"]);
+  (res.cancelledDetail || []).forEach((c, i) => {
+    const r = dataRow(cs, [c.inum, c.name, c.gstin, c.txbl, c.portalStatus || "cancelled", "Confirm: remove from GSTR-1 or keep (re-billed?)"], i, [4]);
+    r.getCell(5).fill = fill(AMBER);
+  });
+  if ((res.cancelledDetail || []).length) {
+    const r = cs.addRow(["", "TOTAL", "", cancTot, "", ""]);
+    r.eachCell((c) => { c.font = { bold: true, color: { argb: INK } }; c.fill = fill(LIGHT); c.border = border; });
+    r.getCell(4).numFmt = MONEY;
+  } else cs.addRow(["—", "No cancelled invoices.", "", "", "", ""]);
+
+  // ===== Sheet 7: DEVIATIONS =====
+  const dv = wb.addWorksheet(SH.dev, { views: [{ showGridLines: false }] });
+  dv.columns = [{ width: 16 }, { width: 40 }, { width: 18 }, { width: 18 }, { width: 18 }];
+  banner(dv, "E", "DEVIATIONS — client book vs portal e-invoice", "Confirm the correct figure with the client for each.");
+  sectionTitle(dv, "E", "Per-invoice value mismatches (C14)");
+  headerRow(dv, ["Invoice", "Recipient", "Sales book", "Portal", "Difference"]);
+  if (res.recon.valMismatch.length) res.recon.valMismatch.forEach((m, i) => { const r = dataRow(dv, [m.inum, m.name, m.sales, m.portal, m.diff], i, [3, 4, 5]); r.getCell(5).font = { bold: true, color: { argb: "FF991B1B" } }; });
+  else dv.addRow(["—", "No value mismatches.", "", "", ""]);
+  dv.addRow([]);
+  sectionTitle(dv, "E", "e-Invoices missing from the sales book (C13)");
+  if (res.recon.missingInSales.length) res.recon.missingInSales.forEach((n, i) => dataRow(dv, [n, "missing in sales sheet", "", "", ""], i));
+  else dv.addRow(["—", "None missing.", "", "", ""]);
+  dv.addRow([]);
+  sectionTitle(dv, "E", "Tagged 'Non-Revenue' but e-invoiced — INCLUDED in GSTR-1");
+  headerRow(dv, ["Invoice", "Recipient", "Portal taxable", "Client tag", ""]);
+  if (res.recon.nonRevButEinvoiced.length) res.recon.nonRevButEinvoiced.forEach((m, i) => dataRow(dv, [m.inum, m.name, m.txbl, m.rev, ""], i, [3]));
+  else dv.addRow(["—", "None.", "", "", ""]);
+
+  // ===== Sheet 8: CHECKS =====
+  const ck = wb.addWorksheet(SH.checks, { views: [{ state: "frozen", ySplit: 4, showGridLines: false }] });
+  ck.columns = [{ width: 6 }, { width: 56 }, { width: 28 }, { width: 42 }, { width: 12 }];
+  banner(ck, "E", "VALIDATION CHECKS", `${res.checks.filter((c) => c.ok).length}/${res.checks.length} passed · ${res.blockingFails.length} blocking`);
+  headerRow(ck, ["#", "Check", "Expected", "Actual", "Result"]);
+  res.checks.forEach((c, i) => {
+    const verdict = c.ok ? "PASS" : (res.blockingFails.includes(c) ? "FAIL" : "DEVIATION");
+    const r = dataRow(ck, [c.id, c.desc, c.expected, c.actual, verdict], i);
+    r.getCell(5).fill = fill(c.ok ? GREEN : (res.blockingFails.includes(c) ? RED : AMBER));
+    r.getCell(5).font = { bold: true };
+    [2, 3, 4].forEach((col) => (r.getCell(col).alignment = { wrapText: true, vertical: "top" }));
   });
 
-  ws.addRow([]);
-  const fr = ws.addRow(["Prepared with Sungrow GST Processor 2026 · figures auto-derived from GST-portal e-invoice data · for client review."]);
-  ws.mergeCells(`A${fr.number}:L${fr.number}`);
-  fr.getCell(1).font = { italic: true, size: 9, color: { argb: "FF94A3B8" } };
-
-  ws.views = [{ state: "frozen", ySplit: 2, showGridLines: false }];
   const buf = await wb.xlsx.writeBuffer();
   return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
@@ -364,13 +440,14 @@ function BridgeBlock({ b }) {
       <div className="g1-cli-wrap">
         <table className="g1-table g1-br">
           <tbody>
-            <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12</td></tr>
+            <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12 · net of CDN in the sheet</td></tr>
             {row("B2C supplies", b.less.b2c, "in Table 12 (hsn_b2c); not in B2B e-invoices")}
             {row("Exports / SEZ", b.less.export, "in Table 12; reported via 6A separately")}
-            {row("Cancelled invoices", b.less.cancelled, "still in sales sheet; no IRN")}
+            {row("Cancelled invoices", b.less.cancelled, "in sales sheet; IRN cancelled on portal")}
             {row("Registered B2B not e-invoiced", b.less.notEinvoiced, "book-only — investigate omission")}
+            {row("Credit/Debit notes already in books", b.less.cdnInBook, "Table 12 already net of these")}
             {row("Book vs portal value differences", b.less.bookVsPortalAdj, "per-invoice mismatches (C14)")}
-            {row("Credit / Debit notes", b.less.cdn, "support nets these; Table 12 does not")}
+            {row("Credit/Debit notes (portal)", b.less.cdn, "portal support also nets these")}
             <tr className="row-warn"><td className="left">= Portal valid B2B e-invoices (SUPPORT)</td><td className="num">{inr(b.portalSupportTxbl)}</td><td className="left small">cross-check figure</td></tr>
             <tr className={Math.abs(b.residual) < 1 ? "" : "row-bad"}><td className="left">Unreconciled residual</td><td className="num">{inr(b.residual)}</td><td className="left small">{Math.abs(b.residual) < 1 ? "✓ fully reconciled" : "⚠ investigate — rows not classified"}</td></tr>
           </tbody>
@@ -403,6 +480,18 @@ function ClientSummary({ res, onDownload, busy }) {
           <button className="g1-cli-dl" onClick={onDownload} disabled={busy}>{busy ? "Building…" : "⬇ Download formatted Excel"}</button>
         </div>
       </div>
+
+      {!res.portalReady && (
+        <div className="g1-cli-block bad">
+          <b>⛔ JSON generation is BLOCKED.</b> Fix these before the GSTR-1 JSON can be downloaded:
+          <ul>{res.blockingFails.map((c) => (<li key={c.id}><b>{c.id}</b> — {c.desc}. <span className="g1-cli-found">Found: {c.actual}</span></li>))}</ul>
+        </div>
+      )}
+      {res.portalReady && res.fails.length > 0 && (
+        <div className="g1-cli-block warn">
+          <b>⚠ {res.fails.length} item(s) to confirm with the client</b> (JSON can still generate): {res.fails.map((c) => c.id).join(", ")}. See the <b>Deviations</b> tab / Excel <b>Action Points</b> sheet.
+        </div>
+      )}
 
       <div className="g1-cli-kpis">
         {kpi("Taxable Value", inr0(t.t12Txbl))}
