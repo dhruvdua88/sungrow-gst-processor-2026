@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { buildWorkbook } from "./engine/index.js";
 import DaybookAnalysis from "./daybook/DaybookAnalysis.jsx";
+import Gstr1Processor from "./gstr1/Gstr1Processor.jsx";
 import "./App.css";
 
 const fmt2 = (n) =>
@@ -280,7 +281,7 @@ export default function App() {
       </header>
 
       <div className="mode-tabs" style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 24px 0", display: "flex", gap: 8 }}>
-        {[["gst", "GST Processor"], ["daybook", "Daybook Analysis"]].map(([id, label]) => (
+        {[["gst", "GST Processor"], ["daybook", "Daybook Analysis"], ["gstr1", "GSTR-1 Processor"]].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setMode(id)}
@@ -297,7 +298,9 @@ export default function App() {
       </div>
 
       <main className="main">
-        {mode === "daybook" ? (
+        {mode === "gstr1" ? (
+          <Gstr1Processor />
+        ) : mode === "daybook" ? (
           <DaybookAnalysis />
         ) : (
           <>
