@@ -278,10 +278,11 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   const cdnNums = new Set(einv.cdnr.map((c) => c.nt_num));
 
   // ----- Table 12 (authoritative = portal hsn(b2b)) -----
-  // SAC (service) codes start with "99" and MUST use UQC "OTH" — the portal rejects goods
-  // UQCs like PCS on a service row (RET191353 "The UQC entered is not valid").
+  // SAC (service) codes start with "99" and MUST use UQC "NA" — the portal rejects
+  // both goods UQCs like PCS *and* "OTH" on a service row (RET191353 "The UQC entered
+  // is not valid."). Confirmed against portal: SAC 998717 accepts only NA.
   const isSac = (hsn) => /^99/.test(String(hsn));
-  const normUqc = (hsn, uqc) => (isSac(hsn) ? "OTH" : (uqc || "OTH").toUpperCase());
+  const normUqc = (hsn, uqc) => (isSac(hsn) ? "NA" : (uqc || "OTH").toUpperCase());
   // Service rows carry no quantity — a non-zero qty on a SAC row is rejected
   // (RET191355 "The Quantity entered is not valid"). Force qty 0 for 99… codes.
   const normQty = (hsn, qty) => (isSac(hsn) ? 0 : qty);
