@@ -466,31 +466,42 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   // ----- Sales-sheet → JSON reconciliation bridge -----
   // The client Sales sheet is the BASE. Every rupee must be accounted for down to the JSON.
   const cancelledSet = new Set(cancelled);
-  let b2cBook = 0, exportBook = 0, zeroBook = 0, cnBook = 0;
+  let b2cBook = 0, exportBook = 0;
   for (const d of salesB2c) b2cBook += d.txbl;
   for (const d of salesExp) exportBook += d.txbl;
-  for (const d of salesCn) cnBook += d.txbl;
   const salesSheetTxbl = fileOverview.sales.txbl;
   const portalSupportTxbl = validB2bTxbl - cdnTxbl; // the portal hsn(b2b) support figure
   const cancelledBook = salesB2b.filter((d) => cancelledSet.has(d.inum)).reduce((a, d) => a + d.txbl, 0);
   const notEinvBook = notEinvoiced.reduce((a, d) => a + d.txbl, 0) - cancelledBook;
   const bookVsPortalAdj = salesValidTxbl - validB2bTxbl; // C14 net (book minus portal on the valid set)
-  // base − b2c − export − JSON-CN = JSON b2b (what we file). Separately the support bridge:
-  // JSON b2b − cancelled − notEinv − adj = portal valid e-invoices.
+  const cancelledInBooks = cancelled.filter((c) => sales.inv[c]);
+  // Panel 1 — COMPOSITION: the sales sheet splits into these buckets; rows SUM to the sheet total.
+  const composition = [
+    { label: `B2B invoices — ${jsonB2b.length} invoices → filed in Table 4 (JSON b2b)`, amt: round2(jsonB2bTxbl), note: "every B2B invoice with value goes into the return" },
+    ...(jsonCdnr.length ? [{ label: `Credit notes — ${jsonCdnr.length} note(s) → filed in Table 9B (JSON cdnr)`, amt: round2(-jsonCdnTxbl), note: "negative documents in the books; reduce the return" }] : []),
+    ...(salesB2c.length ? [{ label: `B2C documents — ${salesB2c.length}`, amt: round2(b2cBook), note: "invoice-level B2C section pending — file separately" }] : []),
+    ...(salesExp.length ? [{ label: `Export / SEZ documents — ${salesExp.length}`, amt: round2(exportBook), note: "exports section pending — file via Table 6A separately" }] : []),
+    ...(zeroDocs.length ? [{ label: `Zero-value dispatch documents — ${zeroDocs.length}`, amt: 0, note: "no taxable value, nothing to file; counted in Table 13 series" }] : []),
+  ];
+  const compositionTotal = round2(composition.reduce((a, r) => a + r.amt, 0));
+  // Panel 2 — CROSS-CHECK: filed B2B walked down to what the portal has as valid e-invoices.
+  const crossCheck = [
+    ...(nz(cancelledBook) ? [{ label: `Invoices in books whose IRN is CANCELLED on portal (${cancelledInBooks.length})`, amt: round2(-cancelledBook), note: "books keep them at book value — confirm with client" }] : []),
+    ...(nz(notEinvBook) ? [{ label: `Registered B2B in books with no IRN (${notEinvoiced.length - cancelledInBooks.length})`, amt: round2(-notEinvBook), note: "e-invoicing omission — investigate" }] : []),
+    ...(nz(bookVsPortalAdj) ? [{ label: `Book vs portal value differences (${valMismatch.length} invoice(s))`, amt: round2(-bookVsPortalAdj), note: "see Deviations (C14) — JSON carries the book figure" }] : []),
+  ];
   const bridge = {
     salesSheetTxbl: round2(salesSheetTxbl),
     table12Txbl: round2(t12Txbl),
     jsonB2bTxbl: round2(jsonB2bTxbl),
     jsonCdnTxbl: round2(jsonCdnTxbl),
-    less: {
-      b2c: round2(b2cBook), export: round2(exportBook), cancelled: round2(cancelledBook),
-      notEinvoiced: round2(notEinvBook), cdnInBook: round2(cnBook), bookVsPortalAdj: round2(bookVsPortalAdj), cdn: round2(cdnTxbl),
-    },
+    portalValidTxbl: round2(validB2bTxbl),
     portalSupportTxbl: round2(portalSupportTxbl),
-    // Books base − B2C − exports − CN-in-books = JSON B2B (identity, residual0)
-    residual0: round2(salesSheetTxbl - b2cBook - exportBook - cnBook - zeroBook - jsonB2bTxbl),
-    // JSON B2B − cancelled-IRN docs − not-e-invoiced − book-vs-portal adj − portal CDN = portal support
-    residual: round2(jsonB2bTxbl - cancelledBook - notEinvBook - bookVsPortalAdj - cdnTxbl - portalSupportTxbl),
+    composition, crossCheck,
+    // Panel-1 identity: composition rows must sum to the sales sheet
+    residual0: round2(salesSheetTxbl - compositionTotal),
+    // Panel-2 identity: filed B2B − cancelled − no-IRN − value diffs = portal valid e-invoices
+    residual: round2(jsonB2bTxbl - cancelledBook - notEinvBook - bookVsPortalAdj - validB2bTxbl),
   };
 
   // ----- validation checks -----
@@ -526,7 +537,7 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   add("C12", "B2C / exports in books — invoice-level JSON sections for these still pending", "0 (module pending)", `B2C ${salesB2c.length} docs ${fmt(b2cBook)} · Exports ${salesExp.length} docs ${fmt(exportBook)}`, !salesB2c.length && !salesExp.length);
   add("C13", "Every valid e-invoice present in client Sales book", "0 missing", `${missingInSales.length} ${missingInSales.slice(0, 6)}`, !missingInSales.length);
   add("C14", "Per-invoice taxable: client book == portal e-invoice", "0 mismatch", `${valMismatch.length} ${valMismatch.slice(0, 4).map((m) => m.inum)}`, !valMismatch.length);
-  add("C15", "Sales sheet fully reconciles: books → JSON → portal support (both residuals 0)", "₹0 · ₹0", `${fmt(bridge.residual0)} · ${fmt(bridge.residual)}`, Math.abs(bridge.residual0) < 1 && Math.abs(bridge.residual) < 1);
+  add("C15", "Sales sheet fully reconciles (composition + portal cross-check, both ₹0)", "₹0 · ₹0", `${fmt(bridge.residual0)} · ${fmt(bridge.residual)}`, Math.abs(bridge.residual0) < 1 && Math.abs(bridge.residual) < 1);
   add("C16", "All portal credit/debit notes are in the sales sheet (Table 12 net of CDN)", "0 unmatched", `${einv.cdnr.filter((c) => !sales.inv[c.nt_num]).length}`, !einv.cdnr.filter((c) => !sales.inv[c.nt_num]).length);
   add("C17", "JSON B2B taxable == client Sales B2B taxable (JSON built from the books)", fmt(salesB2b.reduce((a, d) => a + d.txbl, 0)), fmt(jsonB2bTxbl), Math.abs(jsonB2bTxbl - salesB2b.reduce((a, d) => a + d.txbl, 0)) < 1);
   add("C18", "JSON B2B − credit notes taxable == Table-12 hsn_b2b taxable", fmt(sum(t12B2b, "txval")), fmt(jsonB2bTxbl - jsonCdnTxbl), Math.abs(jsonB2bTxbl - jsonCdnTxbl - sum(t12B2b, "txval")) < 1);

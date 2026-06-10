@@ -333,7 +333,7 @@ async function buildClientExcel(res) {
     const b = res.bridge;
     const rc = wb.addWorksheet(SH.recon, { views: [{ showGridLines: false }] });
     rc.columns = [{ width: 4 }, { width: 50 }, { width: 22 }, { width: 56 }];
-    banner(rc, "D", "TABLE 12 (= SALES SHEET) → E-INVOICE SUPPORT", "Books are the base; the e-invoice dump is the cross-check.");
+    banner(rc, "D", "SALES SHEET → GSTR-1 RECONCILIATION", "Panel 1: where every document in the sales sheet goes. Panel 2: cross-check against the e-invoice portal.");
     rc.getCell("C2").value = link(SH.action); rc.getCell("C2").font = { color: { argb: "FFFFFFFF" }, underline: true };
     const brRow = (label, amount, note, kind) => {
       const r = rc.addRow(["", label, amount, note || ""]);
@@ -343,20 +343,21 @@ async function buildClientExcel(res) {
       r.getCell(2).font = { bold: strong, color: { argb: INK } };
       r.getCell(3).font = { bold: strong, color: { argb: INK } };
       if (strong) [2, 3, 4].forEach((c) => (r.getCell(c).fill = fill(LIGHT)));
+      if (kind === "warn") [2, 3, 4].forEach((c) => (r.getCell(c).fill = fill(AMBER)));
       if (kind === "residual" && Math.abs(amount) >= 1) [2, 3].forEach((c) => (r.getCell(c).fill = fill(RED)));
       [2, 3, 4].forEach((c) => (r.getCell(c).border = border));
     };
-    brRow("Table 12 = Client Sales Sheet — taxable (BASE)", b.table12Txbl, "books drive Table 12 AND the JSON; net of CDN already in the sheet", "base");
-    brRow("less: B2C supplies", -b.less.b2c, "in Table 12 (hsn_b2c); invoice-level section pending");
-    brRow("less: Exports / SEZ", -b.less.export, "in Table 12; reported via 6A separately");
-    brRow("less: credit notes in books (negative docs)", -b.less.cdnInBook, "go to the JSON cdnr section");
-    brRow("= JSON B2B section — taxable (what gets filed)", b.jsonB2bTxbl, Math.abs(b.residual0) < 1 ? "ties to the books exactly" : `residual ${f(b.residual0)} — INVESTIGATE`, "result");
-    brRow("less: Cancelled invoices", -b.less.cancelled, "in sales sheet; IRN cancelled on portal — confirm");
-    brRow("less: Registered B2B not e-invoiced", -b.less.notEinvoiced, "book-only — investigate omission");
-    brRow("less: Book vs portal value differences", -b.less.bookVsPortalAdj, "per-invoice mismatches (see Deviations)");
-    brRow("less: Credit/Debit notes (portal)", -b.less.cdn, "portal support also nets these");
-    brRow("= Portal valid B2B e-invoices (SUPPORT)", b.portalSupportTxbl, "cross-check figure", "result");
-    brRow("Unreconciled residual", b.residual, Math.abs(b.residual) < 1 ? "fully reconciled" : "INVESTIGATE", "residual");
+    sectionTitle(rc, "D", "1 · What's in the client sales sheet, and where each piece goes");
+    b.composition.forEach((row) => brRow(row.label, row.amt, row.note));
+    brRow("Total = Client sales sheet taxable", b.salesSheetTxbl, Math.abs(b.residual0) < 1 ? "every document accounted for" : `${f(b.residual0)} unaccounted — INVESTIGATE`, "result");
+    brRow("Table 12 (HSN summary in the return)", b.table12Txbl, Math.abs(b.table12Txbl - b.salesSheetTxbl) < 1 ? "equals the sales sheet" : "DOES NOT equal the sales sheet — investigate");
+    rc.addRow([]);
+    sectionTitle(rc, "D", "2 · Cross-check: do the filed B2B invoices match the e-invoice portal?");
+    brRow("B2B invoices being filed (from the books)", b.jsonB2bTxbl, "Table 4 / JSON b2b", "base");
+    if (!b.crossCheck.length) brRow("No differences", 0, "books and portal agree invoice-for-invoice");
+    b.crossCheck.forEach((row) => brRow(row.label, row.amt, row.note, "warn"));
+    brRow("= Valid e-invoices on the portal", b.portalValidTxbl, "from the EINV dump", "result");
+    brRow("Unexplained difference", b.residual, Math.abs(b.residual) < 1 ? "fully explained" : "INVESTIGATE", "residual");
   }
 
   // ===== Sheet 4: TABLE 12 HSN =====
@@ -432,31 +433,53 @@ async function buildClientExcel(res) {
 }
 
 function BridgeBlock({ b }) {
-  const row = (label, v, note) => (
-    Math.abs(v) < 1 ? null : (
-      <tr key={label}>
-        <td className="left">less: {label}</td>
-        <td className="num">{v < 0 ? "+ " : "− "}{inr(Math.abs(v))}</td>
-        <td className="left small">{note}</td>
-      </tr>
-    )
-  );
   return (
     <>
+      <div className="g1-cli-sec" style={{ marginTop: 0 }}>1 · What's in the client sales sheet, and where each piece goes</div>
       <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
         <table className="g1-table g1-br">
           <tbody>
-            <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12 AND the JSON · net of CDN in the sheet</td></tr>
-            {row("B2C supplies", b.less.b2c, "in Table 12 (hsn_b2c); invoice-level section pending")}
-            {row("Exports / SEZ", b.less.export, "in Table 12; reported via 6A separately")}
-            {row("Credit notes in books (negative docs)", b.less.cdnInBook, "go to the JSON cdnr section")}
-            <tr className="row-total"><td className="left">= JSON B2B section — taxable (what gets filed)</td><td className="num">{inr(b.jsonB2bTxbl)}</td><td className="left small">{Math.abs(b.residual0) < 1 ? "✓ ties to the books exactly" : `⚠ residual ${inr(b.residual0)}`}</td></tr>
-            {row("Cancelled invoices", b.less.cancelled, "in sales sheet; IRN cancelled on portal — confirm")}
-            {row("Registered B2B not e-invoiced", b.less.notEinvoiced, "book-only — investigate omission")}
-            {row("Book vs portal value differences", b.less.bookVsPortalAdj, "per-invoice mismatches (C14)")}
-            {row("Credit/Debit notes (portal)", b.less.cdn, "portal support also nets these")}
-            <tr className="row-warn"><td className="left">= Portal valid B2B e-invoices (SUPPORT)</td><td className="num">{inr(b.portalSupportTxbl)}</td><td className="left small">cross-check figure</td></tr>
-            <tr className={Math.abs(b.residual) < 1 ? "" : "row-bad"}><td className="left">Unreconciled residual</td><td className="num">{inr(b.residual)}</td><td className="left small">{Math.abs(b.residual) < 1 ? "✓ fully reconciled" : "⚠ investigate — rows not classified"}</td></tr>
+            {b.composition.map((r) => (
+              <tr key={r.label}>
+                <td className="left">{r.label}</td>
+                <td className="num">{inr(r.amt)}</td>
+                <td className="left small">{r.note}</td>
+              </tr>
+            ))}
+            <tr className={Math.abs(b.residual0) < 1 ? "row-total" : "row-bad"}>
+              <td className="left">Total = Client sales sheet taxable</td>
+              <td className="num">{inr(b.salesSheetTxbl)}</td>
+              <td className="left small">{Math.abs(b.residual0) < 1 ? "✓ every document accounted for" : `⚠ ${inr(b.residual0)} unaccounted — investigate`}</td>
+            </tr>
+            <tr>
+              <td className="left">Table 12 (HSN summary in the return)</td>
+              <td className="num">{inr(b.table12Txbl)}</td>
+              <td className="left small">{Math.abs(b.table12Txbl - b.salesSheetTxbl) < 1 ? "✓ equals the sales sheet" : "⚠ does not equal the sales sheet"}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="g1-cli-sec">2 · Cross-check: do the filed B2B invoices match the e-invoice portal?</div>
+      <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
+        <table className="g1-table g1-br">
+          <tbody>
+            <tr className="row-total"><td className="left">B2B invoices being filed (from the books)</td><td className="num">{inr(b.jsonB2bTxbl)}</td><td className="left small">Table 4 / JSON b2b</td></tr>
+            {b.crossCheck.length === 0 && (
+              <tr><td className="left">No differences</td><td className="num">—</td><td className="left small">books and portal agree invoice-for-invoice</td></tr>
+            )}
+            {b.crossCheck.map((r) => (
+              <tr key={r.label} className="row-warn">
+                <td className="left">{r.label}</td>
+                <td className="num">{inr(r.amt)}</td>
+                <td className="left small">{r.note}</td>
+              </tr>
+            ))}
+            <tr className="row-total"><td className="left">= Valid e-invoices on the portal</td><td className="num">{inr(b.portalValidTxbl)}</td><td className="left small">from the EINV dump</td></tr>
+            <tr className={Math.abs(b.residual) < 1 ? "" : "row-bad"}>
+              <td className="left">Unexplained difference</td>
+              <td className="num">{inr(b.residual)}</td>
+              <td className="left small">{Math.abs(b.residual) < 1 ? "✓ fully explained" : "⚠ investigate"}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -531,7 +554,7 @@ function ClientSummary({ res, onDownload, busy }) {
       </div>
 
       {res.bridge && (
-        <Fold open title="Sales sheet ↔ e-invoice reconciliation" badge={Math.abs(res.bridge.residual) < 1 ? "✓ tied" : "⚠ check"}>
+        <Fold open title="Sales sheet → GSTR-1 reconciliation" badge={Math.abs(res.bridge.residual) < 1 && Math.abs(res.bridge.residual0) < 1 ? "✓ tied" : "⚠ check"}>
           <BridgeBlock b={res.bridge} />
         </Fold>
       )}
