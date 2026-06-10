@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
-import { processGstr1, VALID_RATES, VALID_UQC } from "./engine.js";
+import { processGstr1, validateDocRow, buildJson, VALID_RATES, VALID_UQC } from "./engine.js";
 import "./gstr1.css";
 
 const inr = (n) => (n == null || n === "" ? "—" : Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -45,7 +45,7 @@ function Cards({ res }) {
   const t = res.totals, c = res.counts;
   const cards = [
     ["Table 12 taxable", inr0(t.t12Txbl)], ["IGST", inr0(t.t12Igst)], ["CGST", inr0(t.t12Cgst)], ["SGST", inr0(t.t12Sgst)],
-    ["Valid e-invoices", c.validInvoices, true], ["Cancelled IRNs", c.cancelled, true], ["Credit notes", c.cdnr, true], ["HSN rows", c.hsnRows, true],
+    ["JSON B2B invoices", c.jsonB2bInvoices, true], ["Credit notes", c.cdnr, true], ["Zero-value docs (excl.)", c.zeroDocs, true], ["HSN rows", c.hsnRows, true],
   ];
   return (
     <div className="g1-cards">
@@ -131,7 +131,7 @@ function Deviations({ res }) {
       )}
 
       {res.cancelled.length > 0 && (
-        <p className="g1-note"><b>Cancelled IRNs (excluded from GSTR-1):</b> {res.cancelled.join(", ")}</p>
+        <p className="g1-note"><b>Portal-cancelled IRNs:</b> {res.cancelled.join(", ")} — the JSON carries the BOOK copy of any of these still in the sales sheet; confirm with the client.</p>
       )}
       {res.cdnr.length > 0 && (
         <p className="g1-note"><b>Credit/Debit notes (reduce Table 12):</b> {res.cdnr.map((c) => `${c.nt_num} (${c.ntty}, ${c.name}, ${inr(c.txbl)})`).join("; ")}</p>
@@ -254,15 +254,19 @@ async function buildClientExcel(res) {
   // ===== Build the issue / action-point list =====
   const cancTot = (res.cancelledDetail || []).reduce((a, c) => a + c.txbl, 0);
   const actionFor = (id) => ({
-    C1: "Fix the HSN/SAC code in the sales sheet (must be numeric, 6 or 8 digits). JSON is BLOCKED until corrected.",
+    C1: "Fix the HSN/SAC code (numeric, 6 or 8 digits) — editable in the app's Fix & Generate tab. JSON BLOCKED until corrected.",
     C2: "Correct the GST rate to a valid slab. JSON BLOCKED until fixed.",
-    C3: "Use a portal-standard UQC. JSON BLOCKED until fixed.",
-    C4: "Add the HSN description (portal Phase-3 mandatory).",
+    C3: "Use a portal-standard UQC — editable in Fix & Generate. JSON BLOCKED until fixed.",
+    C4: "Add the HSN description (portal Phase-3 mandatory) — editable in Fix & Generate. JSON BLOCKED until fixed.",
     C5: "Recheck tax = taxable × rate for the flagged HSN.",
     C6: "Make CGST = SGST on the flagged intra-state HSN.",
+    C12: "B2C / export documents found in the books — these JSON sections are pending; file them via the portal/offline tool this month.",
     C13: "Add the missing e-invoice(s) to the sales sheet (possible omission).",
-    C14: "Confirm the correct taxable value with the client (book vs portal differ).",
+    C14: "Confirm the correct taxable value with the client (book vs portal differ). The JSON carries the BOOK figure.",
     C16: "A portal credit/debit note is not reflected in the sales sheet — Table 12 may not be net of CDN.",
+    C17: "JSON no longer ties to the books — engine issue, re-run with fresh files.",
+    C18: "JSON B2B − CDN no longer equals Table-12 hsn_b2b — engine issue, re-run with fresh files.",
+    C20: "Fix the flagged document fields (GSTIN/date/POS/value/tax-split) in the Fix & Generate tab. JSON BLOCKED until fixed.",
   }[id] || "Review and resolve with the client.");
   const whereFor = (id) => (["C9"].includes(id) ? SH.canc : ["C13", "C14"].includes(id) ? SH.dev : ["C7", "C8", "C15", "C16"].includes(id) ? SH.recon : ["C10", "C11"].includes(id) ? SH.t13 : SH.t12);
   const issues = [];
@@ -342,12 +346,13 @@ async function buildClientExcel(res) {
       if (kind === "residual" && Math.abs(amount) >= 1) [2, 3].forEach((c) => (r.getCell(c).fill = fill(RED)));
       [2, 3, 4].forEach((c) => (r.getCell(c).border = border));
     };
-    brRow("Table 12 = Client Sales Sheet — taxable (BASE)", b.table12Txbl, "books drive Table 12; net of CDN already in the sheet", "base");
-    brRow("less: B2C supplies", -b.less.b2c, "in Table 12 (hsn_b2c); not in B2B e-invoices");
+    brRow("Table 12 = Client Sales Sheet — taxable (BASE)", b.table12Txbl, "books drive Table 12 AND the JSON; net of CDN already in the sheet", "base");
+    brRow("less: B2C supplies", -b.less.b2c, "in Table 12 (hsn_b2c); invoice-level section pending");
     brRow("less: Exports / SEZ", -b.less.export, "in Table 12; reported via 6A separately");
-    brRow("less: Cancelled invoices", -b.less.cancelled, "in sales sheet; IRN cancelled on portal");
+    brRow("less: credit notes in books (negative docs)", -b.less.cdnInBook, "go to the JSON cdnr section");
+    brRow("= JSON B2B section — taxable (what gets filed)", b.jsonB2bTxbl, Math.abs(b.residual0) < 1 ? "ties to the books exactly" : `residual ${f(b.residual0)} — INVESTIGATE`, "result");
+    brRow("less: Cancelled invoices", -b.less.cancelled, "in sales sheet; IRN cancelled on portal — confirm");
     brRow("less: Registered B2B not e-invoiced", -b.less.notEinvoiced, "book-only — investigate omission");
-    brRow("add back: credit/debit notes in books", -b.less.cdnInBook, "Table 12 already net of these");
     brRow("less: Book vs portal value differences", -b.less.bookVsPortalAdj, "per-invoice mismatches (see Deviations)");
     brRow("less: Credit/Debit notes (portal)", -b.less.cdn, "portal support also nets these");
     brRow("= Portal valid B2B e-invoices (SUPPORT)", b.portalSupportTxbl, "cross-check figure", "result");
@@ -441,12 +446,13 @@ function BridgeBlock({ b }) {
       <div className="g1-cli-wrap" style={{ marginTop: 0 }}>
         <table className="g1-table g1-br">
           <tbody>
-            <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12 · net of CDN in the sheet</td></tr>
-            {row("B2C supplies", b.less.b2c, "in Table 12 (hsn_b2c); not in B2B e-invoices")}
+            <tr className="row-total"><td className="left">Table 12 = Client Sales Sheet — taxable (BASE)</td><td className="num">{inr(b.table12Txbl)}</td><td className="left small">books drive Table 12 AND the JSON · net of CDN in the sheet</td></tr>
+            {row("B2C supplies", b.less.b2c, "in Table 12 (hsn_b2c); invoice-level section pending")}
             {row("Exports / SEZ", b.less.export, "in Table 12; reported via 6A separately")}
-            {row("Cancelled invoices", b.less.cancelled, "in sales sheet; IRN cancelled on portal")}
+            {row("Credit notes in books (negative docs)", b.less.cdnInBook, "go to the JSON cdnr section")}
+            <tr className="row-total"><td className="left">= JSON B2B section — taxable (what gets filed)</td><td className="num">{inr(b.jsonB2bTxbl)}</td><td className="left small">{Math.abs(b.residual0) < 1 ? "✓ ties to the books exactly" : `⚠ residual ${inr(b.residual0)}`}</td></tr>
+            {row("Cancelled invoices", b.less.cancelled, "in sales sheet; IRN cancelled on portal — confirm")}
             {row("Registered B2B not e-invoiced", b.less.notEinvoiced, "book-only — investigate omission")}
-            {row("Credit/Debit notes already in books", b.less.cdnInBook, "Table 12 already net of these")}
             {row("Book vs portal value differences", b.less.bookVsPortalAdj, "per-invoice mismatches (C14)")}
             {row("Credit/Debit notes (portal)", b.less.cdn, "portal support also nets these")}
             <tr className="row-warn"><td className="left">= Portal valid B2B e-invoices (SUPPORT)</td><td className="num">{inr(b.portalSupportTxbl)}</td><td className="left small">cross-check figure</td></tr>
@@ -491,7 +497,7 @@ function ClientSummary({ res, onDownload, busy }) {
       <div className="g1-cli-hero">
         <div>
           <h3>GSTR-1 Summary — {res.meta.period || res.meta.fp}</h3>
-          <p>{res.meta.supplierName ? res.meta.supplierName + " · " : ""}GSTIN {res.meta.gstin || "—"} · {res.counts.validInvoices} invoices · {res.counts.hsnRows} HSN lines</p>
+          <p>{res.meta.supplierName ? res.meta.supplierName + " · " : ""}GSTIN {res.meta.gstin || "—"} · {res.counts.jsonB2bInvoices} invoices · {res.counts.hsnRows} HSN lines</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span className={`g1-cli-status ${cls}`}>{statusTxt}</span>
@@ -515,7 +521,7 @@ function ClientSummary({ res, onDownload, busy }) {
         {kpi("Taxable Value", inr0(t.t12Txbl))}
         {kpi("Total Tax", inr0(totalTax))}
         {kpi("Total Invoice Value", inr0(totalVal), "taxable + tax", true)}
-        {kpi("Invoices", res.counts.validInvoices, `${res.counts.cdnr} CN/DN · ${res.counts.cancelled} cancelled`)}
+        {kpi("Invoices in JSON", res.counts.jsonB2bInvoices, `${res.counts.cdnr} CN/DN · ${res.counts.zeroDocs} zero-value excluded`)}
       </div>
       <div className="g1-cli-split">
         <span><b>IGST</b> {inr0(t.t12Igst)}</span>
@@ -602,9 +608,22 @@ const HSN_COLS = [
   { f: "samt", label: "SGST", w: 96, num: true }, { f: "csamt", label: "Cess", w: 80, num: true },
 ];
 
-// Editable Table-12 grid: fix invalid cells, see edits in red, then generate the JSON.
+const DOC_COLS = [
+  { f: "kind", label: "Type", w: 52, ro: true },
+  { f: "inum", label: "Doc #", w: 96, ro: true },
+  { f: "name", label: "Recipient", w: 200, ro: true },
+  { f: "ctin", label: "GSTIN", w: 168 },
+  { f: "idt", label: "Date (dd-mm-yyyy)", w: 116 },
+  { f: "pos", label: "POS", w: 52 },
+  { f: "invTyp", label: "Inv type", w: 72 },
+  { f: "rchrg", label: "RCM", w: 48 },
+  { f: "val", label: "Doc value", w: 110, num: true },
+];
+
+// Editable grids: fix invalid document fields and HSN cells, see edits in red,
+// then generate a JSON guaranteed to pass portal-schema validation.
 function EditableHsn({ res }) {
-  const seed = () => {
+  const seedHsn = () => {
     const h = res.json?.hsn || {};
     if (Array.isArray(h.data)) return h.data.map((r) => ({ ...r, _seg: "data" }));
     return [
@@ -612,21 +631,45 @@ function EditableHsn({ res }) {
       ...(h.hsn_b2c || []).map((r) => ({ ...r, _seg: "b2c" })),
     ];
   };
-  const [rows, setRows] = useState(seed);
+  const seedDocs = () => (res.jsonDocs || []).map((d) => ({ ...d }));
+  const [rows, setRows] = useState(seedHsn);
+  const [docs, setDocs] = useState(seedDocs);
   const [edited, setEdited] = useState(() => new Set());
   const [done, setDone] = useState(false);
+  const [onlyBad, setOnlyBad] = useState(true);
   // Reseed happens via a `key` prop on the parent (remounts on each new run).
 
+  const supplierState = res.meta.supplierState || (res.meta.gstin || "").slice(0, 2);
+  const fp = res.meta.fp;
   const errorsByRow = useMemo(() => rows.map(validateHsnRow), [rows]);
-  const totalErrors = errorsByRow.reduce((a, e) => a + Object.keys(e).length, 0);
+  const docErrsByRow = useMemo(() => docs.map((d) => validateDocRow(d, { supplierState, fp })), [docs, supplierState, fp]);
+  const hsnErrors = errorsByRow.reduce((a, e) => a + Object.keys(e).length, 0);
+  const docErrors = docErrsByRow.reduce((a, e) => a + Object.keys(e).length, 0);
+  const totalErrors = hsnErrors + docErrors;
+  const badDocCount = docErrsByRow.filter((e) => Object.keys(e).length).length;
 
   const setCell = (i, f, v) => {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [f]: v } : r)));
-    setEdited((prev) => new Set(prev).add(`${i}:${f}`));
+    setEdited((prev) => new Set(prev).add(`h${i}:${f}`));
+    setDone(false);
+  };
+  const setDocCell = (i, f, v) => {
+    setDocs((prev) => prev.map((r, idx) => (idx === i ? { ...r, [f]: f === "val" ? v : String(v).toUpperCase() } : r)));
+    setEdited((prev) => new Set(prev).add(`d${i}:${f}`));
     setDone(false);
   };
 
   const generate = () => {
+    // Rebuild b2b/cdnr from the (possibly edited) documents — same builder as the engine,
+    // so the exported JSON always corresponds 1:1 with the client's books + the fixes made here.
+    const normDocs = docs.map((d) => ({ ...d, ctin: String(d.ctin).trim().toUpperCase(), val: Number(d.val) || 0 }));
+    const json = buildJson({
+      gstin: res.meta.gstin, fp: res.meta.fp,
+      b2bDocs: normDocs.filter((d) => d.kind !== "CN"),
+      cnDocs: normDocs.filter((d) => d.kind === "CN"),
+      t12: [], t12B2b: [], t12B2c: [], t13: res.table13,
+      version: res.json?.version || "GST3.1.2",
+    });
     const mk = (arr) => arr.map((r, i) => ({
       num: i + 1, hsn_sc: String(r.hsn_sc).trim(), desc: String(r.desc || "").slice(0, 30),
       uqc: String(r.uqc || "OTH").toUpperCase(), qty: Number(r.qty) || 0, txval: Number(r.txval) || 0,
@@ -635,28 +678,80 @@ function EditableHsn({ res }) {
     }));
     const seg = {};
     for (const r of rows) (seg[r._seg] ||= []).push(r);
-    const hsn = seg.data ? { data: mk(seg.data) } : { hsn_b2b: mk(seg.b2b || []), hsn_b2c: mk(seg.b2c || []) };
-    const json = { ...res.json, hsn };
+    json.hsn = seg.data ? { data: mk(seg.data) } : { hsn_b2b: mk(seg.b2b || []), hsn_b2c: mk(seg.b2c || []) };
     download(new Blob([JSON.stringify(json, null, 2)], { type: "application/json" }),
       `GSTR1_${res.meta.gstin || "return"}_${res.meta.fp}_EDITED.json`);
     setDone(true);
   };
 
+  const visibleDocs = docs.map((d, i) => [d, i]).filter(([, i]) => !onlyBad || Object.keys(docErrsByRow[i]).length);
+
   return (
     <div className="g1-edit-view">
       <p className="g1-cli-note">
-        Edit any cell to fix what the portal rejects (invalid HSN code, blank description, wrong UQC, etc.).
+        Everything below comes from the <b>client Sales sheet</b> — fix whatever the portal would reject
+        (invalid GSTIN/date/POS on a document, bad HSN code, blank description, wrong UQC, …).
         <b> Cells you change turn red.</b> Cells that are still invalid get a red outline — hover to see why.
-        The <b>Generate JSON</b> button enables once every row passes portal-schema validation.
+        The <b>Generate JSON</b> button enables once every document and HSN row passes portal-schema validation.
       </p>
       <div className="g1-edit-bar">
         {totalErrors === 0
-          ? <span className="g1-edit-ok">✓ All {rows.length} rows valid — ready to generate</span>
-          : <span className="g1-edit-err">⛔ {totalErrors} cell(s) invalid across {errorsByRow.filter((e) => Object.keys(e).length).length} row(s) — fix the red-outlined cells</span>}
+          ? <span className="g1-edit-ok">✓ All {docs.length} documents and {rows.length} HSN rows valid — ready to generate</span>
+          : <span className="g1-edit-err">⛔ {totalErrors} invalid cell(s): {docErrors} on {badDocCount} document(s) · {hsnErrors} on {errorsByRow.filter((e) => Object.keys(e).length).length} HSN row(s)</span>}
         <button className="g1-edit-gen" onClick={generate} disabled={totalErrors > 0}>⬇ Generate GSTR-1 JSON</button>
-        <button className="g1-dl" onClick={() => { setRows(seed()); setEdited(new Set()); setDone(false); }}>↺ Reset to original</button>
+        <button className="g1-dl" onClick={() => { setRows(seedHsn()); setDocs(seedDocs()); setEdited(new Set()); setDone(false); }}>↺ Reset to original</button>
         {done && <span className="g1-edit-ok">JSON downloaded ✓</span>}
       </div>
+
+      <div className="g1-cli-sec">Documents — B2B invoices &amp; credit notes <span className="badge">{docs.length} docs · {badDocCount} with errors</span>
+        <label style={{ marginLeft: 12, fontWeight: 400, fontSize: 12 }}>
+          <input type="checkbox" checked={onlyBad} onChange={(e) => setOnlyBad(e.target.checked)} /> show only documents with errors
+        </label>
+      </div>
+      {visibleDocs.length === 0 ? (
+        <p className="g1-cli-note">✓ {onlyBad ? "No document-level errors." : "No documents."} {onlyBad && docs.length ? "Untick the filter to browse all documents." : ""}</p>
+      ) : (
+        <div className="g1-edit-wrap">
+          <table className="g1-edit">
+            <thead>
+              <tr>
+                <th>#</th>
+                {DOC_COLS.map((c) => <th key={c.f} style={{ minWidth: c.w }}>{c.label}</th>)}
+                <th>Rate-wise items</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDocs.map(([row, i]) => {
+                const errs = docErrsByRow[i];
+                const firstErr = Object.values(errs)[0];
+                return (
+                  <tr key={row.kind + row.inum}>
+                    <td className="g1-edit-rn">{i + 1}</td>
+                    {DOC_COLS.map((c) => {
+                      const isEdited = edited.has(`d${i}:${c.f}`);
+                      const isBad = !!errs[c.f];
+                      return (
+                        <td key={c.f} className={`${c.num ? "num" : ""} ${isEdited ? "edited" : ""} ${isBad ? "bad" : ""}`} title={errs[c.f] || ""}>
+                          {c.ro
+                            ? <span className="g1-edit-ro">{row[c.f]}</span>
+                            : <input value={row[c.f] ?? ""} onChange={(e) => setDocCell(i, c.f, e.target.value)} inputMode={c.num ? "decimal" : "text"} />}
+                        </td>
+                      );
+                    })}
+                    <td className={`g1-edit-ro small ${errs.items ? "bad" : ""}`} title={errs.items || ""}>
+                      {(row.items || []).map((it) => `${it.rt}%: ${inr(it.txval)}`).join(" · ")}
+                    </td>
+                    <td className="g1-edit-status">{firstErr ? <span className="g1-edit-rowerr" title={Object.values(errs).join("; ")}>⚠ {firstErr}</span> : <span className="g1-edit-ok">✓</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="g1-cli-sec" style={{ marginTop: 16 }}>Table 12 — HSN / SAC rows <span className="badge">{rows.length} rows</span></div>
       <div className="g1-edit-wrap">
         <table className="g1-edit">
           <thead>
@@ -674,7 +769,7 @@ function EditableHsn({ res }) {
                 <tr key={i}>
                   <td className="g1-edit-rn">{i + 1}</td>
                   {HSN_COLS.map((c) => {
-                    const isEdited = edited.has(`${i}:${c.f}`);
+                    const isEdited = edited.has(`h${i}:${c.f}`);
                     const isBad = !!errs[c.f];
                     return (
                       <td key={c.f} className={`${c.num ? "num" : ""} ${isEdited ? "edited" : ""} ${isBad ? "bad" : ""}`} title={errs[c.f] || ""}>
@@ -733,21 +828,23 @@ export default function Gstr1Processor() {
       <section className="g1-intro">
         <h2>GSTR-1 Processor</h2>
         <p>
-          Builds Table 12 (HSN) &amp; Table 13 (Documents issued) <b>from the client Sales sheet — the books are the base</b>, and uses
-          the GST-portal e-invoice dump as <b>support</b> to enrich UQC/description and cross-validate every deviation. Exports a
-          portal-schema GSTR-1 JSON. <b>Table 12 covers all sales (B2B + B2C + exports);</b> invoice-level JSON for B2C/exports is
-          handled later. All processing is local — nothing leaves your browser.
+          Builds the <b>entire GSTR-1 JSON — B2B invoices, credit/debit notes, Table 12 (HSN) and Table 13
+          (Documents issued) — from the client Sales sheet. The books are the base; every number in the JSON
+          corresponds 1:1 with the client's data.</b> The GST-portal e-invoice dump is <b>support only</b>: it enriches
+          UQC/description/invoice-type and cross-validates every deviation, but never feeds a number into the JSON.
+          Validation errors are fixable in the <b>Fix &amp; Generate</b> tab before export. All processing is local —
+          nothing leaves your browser.
         </p>
         <ol className="g1-steps">
-          <li>Upload the GST-portal <b>e-invoice dump</b> (EINV_&lt;gstin&gt;_&lt;fy&gt;.xlsx) — the authoritative source.</li>
-          <li>Upload the client's <b>GSTR-1 working file</b> (the report under validation).</li>
-          <li>Pick the return month. Run. Review deviations, resolve with client, then download the JSON.</li>
+          <li>Upload the client's <b>GSTR-1 working file</b> — the base the JSON is built from.</li>
+          <li>Upload the GST-portal <b>e-invoice dump</b> (EINV_&lt;gstin&gt;_&lt;fy&gt;.xlsx) — the cross-check.</li>
+          <li>Pick the return month. Run. Fix any validation errors in-app, resolve deviations with the client, download the JSON.</li>
         </ol>
       </section>
 
       <section className="g1-card">
-        <FilePick label="① E-invoice dump (.xlsx)" hint="EINV_<gstin>_<fy>.xlsx from the GST portal" accept=".xlsx" file={einvFile} onFile={setEinvFile} />
-        <FilePick label="② Client GSTR-1 working (.xlsx)" hint="GSTR-1 Data <month> <yy>.xlsx shared by the client" accept=".xlsx" file={salesFile} onFile={setSalesFile} />
+        <FilePick label="① Client GSTR-1 working (.xlsx)" hint="GSTR-1 Data <month> <yy>.xlsx shared by the client — the base" accept=".xlsx" file={salesFile} onFile={setSalesFile} />
+        <FilePick label="② E-invoice dump (.xlsx)" hint="EINV_<gstin>_<fy>.xlsx from the GST portal — the cross-check" accept=".xlsx" file={einvFile} onFile={setEinvFile} />
         <div className="g1-period">
           <label>Return period</label>
           <select value={month} onChange={(e) => setMonth(+e.target.value)}>{MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}</select>

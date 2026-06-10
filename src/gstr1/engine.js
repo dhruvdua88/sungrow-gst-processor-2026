@@ -1,8 +1,12 @@
 // GSTR-1 Processor engine — client-side, no upload.
-// Inputs:  (1) GST-portal e-invoice dump  EINV_<gstin>_<fy>.xlsx   (authoritative for GST)
-//          (2) Client GSTR-1 working file  "GSTR-1 Data <month> <yy>.xlsx" (the report being validated)
+// Inputs:  (1) Client GSTR-1 working file  "GSTR-1 Data <month> <yy>.xlsx" — the BOOKS, the base.
+//          (2) GST-portal e-invoice dump  EINV_<gstin>_<fy>.xlsx — SUPPORT only (cross-check +
+//              enrichment of UQC / description / invoice-type / reverse-charge).
 // Output:  invoice summary, Table 12 (HSN), Table 13 (Docs issued), deviation/reconciliation
 //          register, validation checks, and a portal-schema GSTR-1 JSON.
+//
+// The JSON (b2b, cdnr, hsn, doc_issue) is built ENTIRELY from the client Sales sheet, so it
+// corresponds 1:1 with the client's data. The e-invoice dump never feeds a number into the JSON.
 //
 // Scope (current): B2B + Credit/Debit Notes (Registered) only. B2C / exports deferred by design.
 import * as XLSX from "xlsx";
@@ -19,6 +23,12 @@ export const VALID_UQC = new Set([
 ]);
 // Table 13 document-nature codes (doc_num in JSON).
 export const DOC_NUM = { INVOICE: 1, DEBIT_NOTE: 4, CREDIT_NOTE: 5 };
+// 15-char GSTIN pattern (state code + PAN + entity + Z + checksum).
+export const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/;
+// Valid state codes for POS (01-38 states/UTs + 96 foreign + 97 other territory).
+export const VALID_POS = new Set([
+  ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, "0")), "96", "97",
+]);
 
 // ---------------- low-level helpers ----------------
 const num = (v) => {
@@ -28,6 +38,7 @@ const num = (v) => {
 };
 const txt = (v) => (v == null ? "" : String(v).trim());
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const nz = (n) => Math.abs(n) > 0.005; // non-zero beyond float noise
 
 function gridOf(wb, sheetName) {
   const ws = wb.Sheets[sheetName];
@@ -56,7 +67,10 @@ const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7,
 // parse "07-May-2026" or a JS Date -> {dd,mm,yyyy} and "dd-mm-yyyy"
 function parseDate(v) {
   if (v instanceof Date) {
-    return { d: v.getDate(), m: v.getMonth() + 1, y: v.getFullYear() };
+    // SheetJS serial→Date conversion can land a few hours before local midnight
+    // (timezone fudge) — snap to the nearest day via UTC + 12h to avoid off-by-one.
+    const u = new Date(v.getTime() + 12 * 3600 * 1000);
+    return { d: u.getUTCDate(), m: u.getUTCMonth() + 1, y: u.getUTCFullYear() };
   }
   const s = txt(v);
   let mm = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
@@ -75,8 +89,9 @@ const posCode = (v) => {
   const m = s.match(/^(\d{2})/);
   return m ? m[1] : s.slice(0, 2);
 };
+const cleanGstin = (v) => txt(v).replace(/\s/g, "").toUpperCase();
 
-// ---------------- parse the e-invoice dump (authoritative) ----------------
+// ---------------- parse the e-invoice dump (SUPPORT / cross-check) ----------------
 function parseEinv(wb) {
   const out = { b2b: {}, hsn: [], cdnr: [], scope: { b2c: 0, exp: 0, cdnur: 0 }, errors: [] };
 
@@ -103,7 +118,7 @@ function parseEinv(wb) {
     d.txbl += it.txval; d.igst += it.iamt; d.cgst += it.camt; d.sgst += it.samt; d.cess += it.csamt;
   }
 
-  // hsn(b2b) — the portal's auto-populated Table 12 (already net of cancelled IRNs + CDN)
+  // hsn(b2b) — the portal's auto-populated Table 12 (used only to enrich UQC/description)
   const hsnName = findSheet(wb, "hsn(b2b)", "hsn (b2b)");
   if (hsnName) {
     g = gridOf(wb, hsnName);
@@ -117,7 +132,7 @@ function parseEinv(wb) {
         rt: num(r[5]), iamt: num(r[6]), camt: num(r[7]), samt: num(r[8]), csamt: num(r[9]),
       });
     }
-  } else out.errors.push('Sheet "hsn(b2b)" not found — Table 12 cannot be auto-populated.');
+  } else out.errors.push('Sheet "hsn(b2b)" not found — UQC/description enrichment unavailable.');
 
   // cdnr — credit/debit notes (registered)
   const cdnrName = findSheet(wb, "cdnr");
@@ -158,7 +173,7 @@ function parseEinv(wb) {
   return out;
 }
 
-// ---------------- parse the client Sales working file (report under validation) ----------------
+// ---------------- parse the client Sales working file (THE BASE for the JSON) ----------------
 function parseSales(wb) {
   const out = { inv: {}, hsn: {}, hsnB2b: {}, hsnB2c: {}, rows: 0, errors: [] };
   const name = findSheet(wb, "Sales");
@@ -171,22 +186,33 @@ function parseSales(wb) {
     if (!r || txt(r[4]) === "") continue;
     out.rows++;
     const inv = txt(r[4]);
-    const d = (out.inv[inv] ||= { inum: inv, name: txt(r[6]), gstin: new Set(), rev: new Set(), txbl: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, export: false });
+    const d = (out.inv[inv] ||= {
+      inum: inv, name: txt(r[6]), gstin: new Set(), rev: new Set(), ship: new Set(),
+      txbl: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, val: 0, export: false,
+      date: null, byRate: {},
+    });
+    if (!d.date) d.date = r[5]; // invoice date (first line wins)
     const txbl = num(r[17]); // R Total (taxable)
     d.txbl += txbl; d.cgst += num(r[19]); d.sgst += num(r[20]); d.igst += num(r[21]); d.tax += num(r[28]);
-    d.gstin.add(txt(r[24])); d.rev.add(txt(r[26]));
+    d.val += num(r[23]); // invoice total (taxable + tax + TCS)
+    d.gstin.add(txt(r[24])); d.rev.add(txt(r[26])); d.ship.add(txt(r[25]));
     if (/export|sez/i.test(txt(r[25])) || /export|sez/i.test(txt(r[26]))) d.export = true; // shipment / type flags export
-    // HSN rebuild with rate normalisation: component (CGST+SGST) shows half rate; IGST shows full rate.
-    // Aggregate into the combined map AND a B2B/B2C bucket (registered recipient => B2B).
-    const s = num(r[18]), cg = num(r[19]), sg = num(r[20]);
-    const totalRate = cg || sg ? s * 2 : s;
+    // Rate normalisation: component (CGST+SGST) rows show half rate; IGST rows show full rate.
+    const s = num(r[18]), cg = num(r[19]), sg = num(r[20]), ig = num(r[21]);
+    const totalRate = round2(cg || sg ? s * 2 : s);
+    // Per-invoice rate-wise items — these become the JSON b2b/cdnr itm_det lines.
+    const ri = (d.byRate[totalRate] ||= { rt: totalRate, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+    ri.txval += txbl; ri.iamt += ig; ri.camt += cg; ri.samt += sg;
+    // HSN rebuild — aggregate into the combined map AND a B2B/B2C bucket (registered => B2B).
+    // Zero-value lines (no taxable, no tax) are dispatch records, not supplies — skip in Table 12.
+    if (!nz(txbl) && !nz(ig + cg + sg)) continue;
     const code = txt(r[32]) || "(blank)";
-    const hk = `${code}|${round2(totalRate)}`;
-    const registered = txt(r[24]).replace(/\s/g, "").length >= 15;
+    const hk = `${code}|${totalRate}`;
+    const registered = cleanGstin(r[24]).length >= 15;
     const bucket = registered ? out.hsnB2b : out.hsnB2c;
     for (const store of [out.hsn, bucket]) {
-      const hh = (store[hk] ||= { hsn: code, rt: round2(totalRate), qty: 0, txval: 0, iamt: 0, camt: 0, samt: 0 });
-      hh.qty += num(r[12]); hh.txval += txbl; hh.iamt += num(r[21]); hh.camt += num(r[19]); hh.samt += num(r[20]);
+      const hh = (store[hk] ||= { hsn: code, rt: totalRate, qty: 0, txval: 0, iamt: 0, camt: 0, samt: 0 });
+      hh.qty += num(r[12]); hh.txval += txbl; hh.iamt += ig; hh.camt += cg; hh.samt += sg;
     }
   }
   return out;
@@ -263,6 +289,37 @@ function fileSummary(wb) {
   return out;
 }
 
+// ---------------- portal-schema validation of a JSON document (b2b invoice / credit note) ----------------
+// Returns { field: errorMessage }. These rules are what makes the GST portal REJECT the JSON;
+// every one of them is fixable in the app's "Fix & Generate" editor.
+export function validateDocRow(doc, { supplierState = "", fp = "" } = {}) {
+  const errs = {};
+  const ctin = cleanGstin(doc.ctin);
+  if (!GSTIN_RE.test(ctin)) errs.ctin = "Recipient GSTIN invalid (15-char GSTIN pattern)";
+  if (!/^\d{2}-\d{2}-\d{4}$/.test(txt(doc.idt))) errs.idt = "Date must be dd-mm-yyyy";
+  else if (/^(\d{2})(\d{4})$/.test(fp)) {
+    const [, fm, fy] = fp.match(/^(\d{2})(\d{4})$/);
+    const [, , dm, dy] = txt(doc.idt).match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (+dy > +fy || (+dy === +fy && +dm > +fm)) errs.idt = "Document date is after the return period";
+  }
+  if (!VALID_POS.has(txt(doc.pos))) errs.pos = "POS must be a valid 2-digit state code";
+  if (!(num(doc.val) > 0)) errs.val = "Document value must be > 0";
+  if (!["R", "SEWP", "SEWOP", "DE"].includes(txt(doc.invTyp))) errs.invTyp = "Invoice type must be R / SEWP / SEWOP / DE";
+  const intra = txt(doc.pos) === supplierState && doc.invTyp === "R";
+  const itemErrs = [];
+  for (const it of doc.items || []) {
+    if (!VALID_RATES.includes(Number(it.rt))) itemErrs.push(`rate ${it.rt} not a valid GST slab`);
+    if (it.txval < -0.005) itemErrs.push(`negative taxable at rate ${it.rt}`);
+    if (intra && nz(it.iamt)) itemErrs.push(`POS ${doc.pos} = supplier state but IGST charged at rate ${it.rt}`);
+    if (!intra && nz(it.camt + it.samt)) itemErrs.push(`POS ${doc.pos} is inter-state/SEZ but CGST/SGST charged at rate ${it.rt}`);
+    const expect = (Math.abs(it.txval) * Number(it.rt)) / 100;
+    const got = Math.abs(it.iamt) + Math.abs(it.camt) + Math.abs(it.samt);
+    if (Math.abs(expect - got) > Math.max(1, expect * 0.02)) itemErrs.push(`tax ≠ taxable × ${it.rt}%`);
+  }
+  if (itemErrs.length) errs.items = itemErrs.join("; ");
+  return errs;
+}
+
 // ---------------- main ----------------
 export function processGstr1(einvWb, salesWb, opts = {}) {
   const einv = parseEinv(einvWb);
@@ -272,20 +329,64 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
 
   const gstin = opts.gstin || ""; // supplier GSTIN is taken from the EINV filename by the caller
   const fp = opts.fp || ""; // "MMYYYY"
+  const supplierState = gstin.slice(0, 2);
 
-  // ----- invoice classification -----
+  // ----- e-invoice side (SUPPORT) -----
   const b2bAll = Object.values(einv.b2b);
   const cancelled = b2bAll.filter((d) => d.status.toLowerCase() !== "valid").map((d) => d.inum).sort();
   const validInv = b2bAll.filter((d) => d.status.toLowerCase() === "valid");
-
   const validB2bTxbl = sum(validInv, "txbl");
   const cdnTxbl = einv.cdnr.reduce((a, c) => a + c.txbl, 0);
-  const cdnNums = new Set(einv.cdnr.map((c) => c.nt_num));
+
+  // ----- classify the client's Sales documents (THE BASE for the JSON) -----
+  const salesDocs = Object.values(sales.inv);
+  const isReg = (d) => [...d.gstin].some((g) => cleanGstin(g).length >= 15);
+  const isZero = (d) => !nz(d.txbl) && !nz(d.cgst + d.sgst + d.igst);
+  const salesCn = salesDocs.filter((d) => d.txbl < -0.005);               // negative book docs → credit notes
+  const zeroDocs = salesDocs.filter(isZero).map((d) => d.inum).sort();    // zero-value dispatch docs → Table 13 only
+  const salesB2b = salesDocs.filter((d) => d.txbl > 0.005 && isReg(d) && !d.export);
+  const salesB2c = salesDocs.filter((d) => d.txbl > 0.005 && !isReg(d) && !d.export);
+  const salesExp = salesDocs.filter((d) => d.txbl > 0.005 && d.export);
+
+  // Build the JSON-source document objects from the books, enriched (never valued) from EINV.
+  const toJsonDoc = (d, kind) => {
+    const e = kind === "CN"
+      ? einv.cdnr.find((c) => c.nt_num === d.inum)
+      : einv.b2b[d.inum];
+    const ctin = cleanGstin([...d.gstin].map(cleanGstin).find((g) => g.length >= 15) || "");
+    const abs = kind === "CN" ? -1 : 1; // notes carry positive numbers in the JSON
+    const items = Object.values(d.byRate)
+      .filter((it) => nz(it.txval) || nz(it.iamt + it.camt + it.samt))
+      .map((it) => ({
+        rt: it.rt, txval: round2(abs * it.txval), iamt: round2(abs * it.iamt),
+        camt: round2(abs * it.camt), samt: round2(abs * it.samt), csamt: 0,
+      }))
+      .sort((a, b) => a.rt - b.rt);
+    const val = round2(abs * (nz(d.val) ? d.val : d.txbl + d.tax));
+    return {
+      kind, inum: d.inum, name: d.name, ctin,
+      idt: ddmmyyyy(d.date || (e && (e.date || e.nt_dt)) || ""),
+      val, pos: ctin.slice(0, 2) || posCode(e?.pos || ""),
+      rchrg: e?.rchrg === "Y" ? "Y" : "N",
+      invTyp: e ? mapInvType(e.invType) : ([...d.ship].some((s) => /sez/i.test(s)) ? "SEWP" : "R"),
+      items,
+      txbl: round2(abs * d.txbl),
+      einvStatus: e ? (e.status || "Valid") : "not e-invoiced",
+    };
+  };
+  const jsonB2b = salesB2b.map((d) => toJsonDoc(d, "INV")).sort((a, b) => a.inum.localeCompare(b.inum));
+  const jsonCdnr = salesCn.map((d) => toJsonDoc(d, "CN")).sort((a, b) => a.inum.localeCompare(b.inum));
+  const jsonDocs = [...jsonB2b, ...jsonCdnr];
+
+  // Per-document portal validation — every error here is editable in the app before export.
+  const docErrors = jsonDocs
+    .map((doc) => ({ inum: doc.inum, kind: doc.kind, errs: validateDocRow(doc, { supplierState, fp }) }))
+    .filter((x) => Object.keys(x.errs).length);
+
+  const jsonB2bTxbl = sum(jsonB2b, "txbl");
+  const jsonCdnTxbl = jsonCdnr.reduce((a, c) => a + c.txbl, 0); // negative (books sign)
 
   // ----- Table 12 (BASE = client Sales sheet; e-invoice dump is SUPPORT only) -----
-  // The books drive Table 12 — its HSN totals come from the client Sales sheet, so Table 12
-  // taxable equals the Sales-sheet taxable by construction. The portal e-invoice dump is used
-  // only to (a) enrich UQC + description per HSN, and (b) cross-validate (the bridge / checks).
   // SAC (service) codes start with "99" → UQC must be "NA" (portal rejects PCS *and* OTH →
   // RET191353) and qty must be 0 (RET191355).
   const isSac = (hsn) => /^99/.test(String(hsn));
@@ -310,28 +411,37 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   const t12Txbl = sum(t12, "txval");
   const t12Tax = t12.reduce((a, h) => a + h.iamt + h.camt + h.samt, 0);
 
-  // ----- Table 13 (documents issued) -----
-  const allNums = new Set([...Object.keys(einv.b2b), ...Object.keys(sales.inv)].filter((k) => !cdnNums.has(k)));
+  // ----- Table 13 (documents issued — from the books) -----
+  const cnNums = new Set([...salesCn.map((d) => d.inum), ...einv.cdnr.map((c) => c.nt_num)]);
+  const allNums = new Set(Object.keys(sales.inv).filter((k) => !cnNums.has(k)));
   const invNums = [...allNums].filter((x) => /^\d+$/.test(x)).map(Number).sort((a, b) => a - b);
   const invFrom = invNums[0], invTo = invNums[invNums.length - 1];
   const invTotal = invNums.length;
-  const invCancelled = cancelled.filter((c) => /^\d+$/.test(c)).length;
-  const invNet = invTotal - invCancelled;
+  // Cancelled docs = portal-cancelled IRNs that the books DON'T carry (book copies stay issued).
+  const cancelledDocs = cancelled.filter((c) => !sales.inv[c]);
+  const invCancelled = cancelledDocs.filter((c) => /^\d+$/.test(c)).length;
+  const invNet = invTotal; // every doc in the books is an issued doc; cancelled = portal-only IRNs
   const presentSet = new Set(invNums);
-  const cdnNumeric = new Set([...cdnNums].filter((x) => /^\d+$/.test(x)).map(Number));
+  const cdnNumeric = new Set([...cnNums].filter((x) => /^\d+$/.test(x)).map(Number));
+  const cancNumeric = new Set(cancelledDocs.filter((x) => /^\d+$/.test(x)).map(Number));
   const gaps = [];
-  for (let n = invFrom; n <= invTo; n++) if (!presentSet.has(n) && !cdnNumeric.has(n)) gaps.push(n);
+  for (let n = invFrom; n <= invTo; n++) if (!presentSet.has(n) && !cdnNumeric.has(n) && !cancNumeric.has(n)) gaps.push(n);
 
-  const t13 = [{ code: DOC_NUM.INVOICE, nature: "Invoices for outward supply", from: String(invFrom), to: String(invTo), total: invTotal, cancel: invCancelled, net: invNet }];
-  if (einv.cdnr.length) {
-    const cn = einv.cdnr.map((c) => c.nt_num).sort();
-    const cCount = einv.cdnr.filter((c) => c.ntty === "C").length;
-    const dCount = einv.cdnr.filter((c) => c.ntty === "D").length;
-    if (cCount) t13.push({ code: DOC_NUM.CREDIT_NOTE, nature: "Credit Note", from: cn[0], to: cn[cn.length - 1], total: cCount, cancel: 0, net: cCount });
-    if (dCount) t13.push({ code: DOC_NUM.DEBIT_NOTE, nature: "Debit Note", from: cn[0], to: cn[cn.length - 1], total: dCount, cancel: 0, net: dCount });
+  const t13 = [{
+    code: DOC_NUM.INVOICE, nature: "Invoices for outward supply",
+    from: String(invFrom), to: String(invTo),
+    total: invTotal + invCancelled, cancel: invCancelled, net: invNet,
+  }];
+  if (jsonCdnr.length || einv.cdnr.length) {
+    const cnAll = [...new Set([...salesCn.map((d) => d.inum), ...einv.cdnr.map((c) => c.nt_num)])].sort();
+    const dNums = new Set(einv.cdnr.filter((c) => c.ntty === "D").map((c) => c.nt_num));
+    const cCount = cnAll.filter((n) => !dNums.has(n)).length;
+    const dCount = cnAll.length - cCount;
+    if (cCount) t13.push({ code: DOC_NUM.CREDIT_NOTE, nature: "Credit Note", from: cnAll[0], to: cnAll[cnAll.length - 1], total: cCount, cancel: 0, net: cCount });
+    if (dCount) t13.push({ code: DOC_NUM.DEBIT_NOTE, nature: "Debit Note", from: cnAll[0], to: cnAll[cnAll.length - 1], total: dCount, cancel: 0, net: dCount });
   }
 
-  // ----- reconciliation / deviations from client report -----
+  // ----- reconciliation / deviations: books vs portal e-invoices -----
   const missingInSales = validInv.filter((d) => !sales.inv[d.inum]).map((d) => d.inum);
   const valMismatch = [];
   for (const d of validInv) {
@@ -340,44 +450,47 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
       valMismatch.push({ inum: d.inum, name: d.name, sales: round2(s.txbl), portal: round2(d.txbl), diff: round2(s.txbl - d.txbl) });
     }
   }
+  // registered B2B in the books with NO valid IRN (and not zero-value) — e-invoicing omission
+  const validSet = new Set(validInv.map((d) => d.inum));
+  const notEinvoiced = salesB2b.filter((d) => !validSet.has(d.inum)).map((d) => ({
+    inum: d.inum, name: d.name, txbl: round2(d.txbl),
+    portalStatus: einv.b2b[d.inum]?.status || "no IRN",
+  }));
   // invoices the client tagged Non-Revenue but which carry a valid IRN -> belong in GSTR-1
   const nonRevButEinvoiced = validInv
     .filter((d) => sales.inv[d.inum] && !sales.inv[d.inum].rev.has("Yes-Revenue"))
     .map((d) => ({ inum: d.inum, name: d.name, txbl: round2(d.txbl), rev: [...sales.inv[d.inum].rev].join(", ") }))
     .sort((a, b) => b.txbl - a.txbl);
-  // e-invoices not present at all in the client book (true omissions)
   const salesValidTxbl = validInv.reduce((a, d) => a + (sales.inv[d.inum]?.txbl || 0), 0);
 
-  // ----- Sales-sheet → Table 12 reconciliation bridge -----
-  // The client Sales sheet is the BASE. Every rupee must be accounted for down to Table 12.
-  // Partition every Sales-book invoice into ONE mutually-exclusive bucket (no double counting).
-  const validSet = new Set(validInv.map((d) => d.inum));
+  // ----- Sales-sheet → JSON reconciliation bridge -----
+  // The client Sales sheet is the BASE. Every rupee must be accounted for down to the JSON.
   const cancelledSet = new Set(cancelled);
-  const cdnSet = new Set(einv.cdnr.map((c) => c.nt_num));
-  const isRegistered = (inv) => [...inv.gstin].some((g) => String(g).replace(/\s/g, "").length >= 15);
-  let b2cBook = 0, exportBook = 0, cancelledBook = 0, notEinvBook = 0, cdnInBook = 0;
-  for (const inv of Object.values(sales.inv)) {
-    if (validSet.has(inv.inum)) continue;          // valid B2B → captured in salesValidTxbl
-    if (cdnSet.has(inv.inum) || inv.txbl < 0) { cdnInBook += inv.txbl; continue; } // credit/debit note already in books (Table 12 already net of it)
-    if (cancelledSet.has(inv.inum)) { cancelledBook += inv.txbl; continue; }
-    if (inv.export) { exportBook += inv.txbl; continue; }
-    if (!isRegistered(inv)) { b2cBook += inv.txbl; continue; }
-    notEinvBook += inv.txbl;                        // registered B2B in book, no IRN — possible omission
-  }
-  const bookVsPortalAdj = salesValidTxbl - validB2bTxbl; // C14 net (book minus portal on the valid set)
+  let b2cBook = 0, exportBook = 0, zeroBook = 0, cnBook = 0;
+  for (const d of salesB2c) b2cBook += d.txbl;
+  for (const d of salesExp) exportBook += d.txbl;
+  for (const d of salesCn) cnBook += d.txbl;
   const salesSheetTxbl = fileOverview.sales.txbl;
   const portalSupportTxbl = validB2bTxbl - cdnTxbl; // the portal hsn(b2b) support figure
-  // Table 12 == Sales sheet (base). The bridge explains the e-invoice SUPPORT figure:
-  // base − b2c − export − cancelled − notEinv − adj − CDN = portal valid B2B e-invoices (support).
+  const cancelledBook = salesB2b.filter((d) => cancelledSet.has(d.inum)).reduce((a, d) => a + d.txbl, 0);
+  const notEinvBook = notEinvoiced.reduce((a, d) => a + d.txbl, 0) - cancelledBook;
+  const bookVsPortalAdj = salesValidTxbl - validB2bTxbl; // C14 net (book minus portal on the valid set)
+  // base − b2c − export − JSON-CN = JSON b2b (what we file). Separately the support bridge:
+  // JSON b2b − cancelled − notEinv − adj = portal valid e-invoices.
   const bridge = {
     salesSheetTxbl: round2(salesSheetTxbl),
     table12Txbl: round2(t12Txbl),
+    jsonB2bTxbl: round2(jsonB2bTxbl),
+    jsonCdnTxbl: round2(jsonCdnTxbl),
     less: {
       b2c: round2(b2cBook), export: round2(exportBook), cancelled: round2(cancelledBook),
-      notEinvoiced: round2(notEinvBook), cdnInBook: round2(cdnInBook), bookVsPortalAdj: round2(bookVsPortalAdj), cdn: round2(cdnTxbl),
+      notEinvoiced: round2(notEinvBook), cdnInBook: round2(cnBook), bookVsPortalAdj: round2(bookVsPortalAdj), cdn: round2(cdnTxbl),
     },
     portalSupportTxbl: round2(portalSupportTxbl),
-    residual: round2(salesSheetTxbl - b2cBook - exportBook - cancelledBook - notEinvBook - cdnInBook - bookVsPortalAdj - cdnTxbl - portalSupportTxbl),
+    // Books base − B2C − exports − CN-in-books = JSON B2B (identity, residual0)
+    residual0: round2(salesSheetTxbl - b2cBook - exportBook - cnBook - zeroBook - jsonB2bTxbl),
+    // JSON B2B − cancelled-IRN docs − not-e-invoiced − book-vs-portal adj − portal CDN = portal support
+    residual: round2(jsonB2bTxbl - cancelledBook - notEinvBook - bookVsPortalAdj - cdnTxbl - portalSupportTxbl),
   };
 
   // ----- validation checks -----
@@ -397,48 +510,61 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
   add("C3d", "Goods (non-99) rows use a real UQC, not NA", "0 invalid", `${badGoodsUqc.length} ${badGoodsUqc.slice(0, 6)}`, !badGoodsUqc.length);
   const badGoodsQty = t12.filter((h) => !/^99/.test(h.hsn) && round2(h.qty) <= 0).map((h) => h.hsn);
   add("C3e", "Goods (non-99) rows have qty > 0", "0 invalid", `${badGoodsQty.length} ${badGoodsQty.slice(0, 6)}`, !badGoodsQty.length);
+  const negT12 = t12.filter((h) => h.txval < -0.005).map((h) => `${h.hsn}@${h.rt}`);
+  add("C3f", "No Table-12 row nets negative (CDN larger than sales for an HSN/rate)", "0 negative", `${negT12.length} ${negT12.slice(0, 6)}`, !negT12.length);
   const noDesc = t12.filter((h) => !h.desc).map((h) => h.hsn);
   add("C4", "Every HSN row has a description (mandatory Phase-3)", "0 blank", `${noDesc.length} ${noDesc.slice(0, 6)}`, !noDesc.length);
-  const arith = t12.filter((h) => { const e = (h.txval * h.rt) / 100; return Math.abs(e - (h.iamt + h.camt + h.samt)) > Math.max(1, e * 0.02); }).map((h) => `${h.hsn}@${h.rt}`);
+  const arith = t12.filter((h) => { const e = (Math.abs(h.txval) * h.rt) / 100; return Math.abs(e - Math.abs(h.iamt + h.camt + h.samt)) > Math.max(1, e * 0.02); }).map((h) => `${h.hsn}@${h.rt}`);
   add("C5", "Per-row tax == taxable × rate (±2% rounding)", "0 breaks", `${arith.length} ${arith.slice(0, 6)}`, !arith.length);
   const csBreak = t12.filter((h) => Math.abs(h.camt - h.samt) > 1).map((h) => h.hsn);
   add("C6", "CGST == SGST on every intra-state row", "0 breaks", `${csBreak.length}`, !csBreak.length);
   add("C7", "Table-12 taxable == client Sales sheet taxable (books drive Table 12)", fmt(fileOverview.sales.txbl), fmt(t12Txbl), Math.abs(t12Txbl - fileOverview.sales.txbl) < 1);
   add("C8", "Table-12 tax == client Sales sheet tax (cess shown separately)", fmt(fileOverview.sales.tax), fmt(t12Tax), Math.abs(t12Tax - fileOverview.sales.tax) < Math.max(2, fileOverview.sales.tax * 0.005));
-  add("C9", "Cancelled IRNs excluded from Table 12", `excluded ${cancelled.length}`, `${cancelled.join(", ") || "none"}`, true);
-  add("C10", "Table-13 net == total − cancelled", `${invTotal}-${invCancelled}=${invNet}`, `${invNet}`, invNet === invTotal - invCancelled);
-  add("C11", "Invoice serial series continuous (gaps = CDN only)", "0 unexplained gaps", `${gaps.length} ${gaps.slice(0, 8)}`, !gaps.length);
-  add("C12", "B2C/exports: included in Table 12 from sales sheet (invoice-level JSON for these still pending)", "info", `B2C txbl ${fmt(b2cBook)} · Exports ${fmt(exportBook)}`, true);
+  add("C9", "Portal-cancelled IRNs that the books still carry — confirm with client", cancelled.length ? `confirm ${cancelled.filter((c) => sales.inv[c]).length}` : "none", `${cancelled.join(", ") || "none"}`, true);
+  add("C10", "Table-13 net == total − cancelled", `${invTotal + invCancelled}-${invCancelled}=${invNet}`, `${invNet}`, invNet === invTotal);
+  add("C11", "Invoice serial series continuous (gaps = CDN/cancelled only)", "0 unexplained gaps", `${gaps.length} ${gaps.slice(0, 8)}`, !gaps.length);
+  add("C12", "B2C / exports in books — invoice-level JSON sections for these still pending", "0 (module pending)", `B2C ${salesB2c.length} docs ${fmt(b2cBook)} · Exports ${salesExp.length} docs ${fmt(exportBook)}`, !salesB2c.length && !salesExp.length);
   add("C13", "Every valid e-invoice present in client Sales book", "0 missing", `${missingInSales.length} ${missingInSales.slice(0, 6)}`, !missingInSales.length);
   add("C14", "Per-invoice taxable: client book == portal e-invoice", "0 mismatch", `${valMismatch.length} ${valMismatch.slice(0, 4).map((m) => m.inum)}`, !valMismatch.length);
-  add("C15", "Sales sheet fully reconciles to Table 12 (bridge residual 0)", "₹0", fmt(bridge.residual), Math.abs(bridge.residual) < 1);
-  add("C16", "Table 12 is net of credit/debit notes (all portal CN/DN are in the sales sheet)", "₹0 unmatched", fmt(cdnInBook + cdnTxbl), Math.abs(cdnInBook + cdnTxbl) < 2);
+  add("C15", "Sales sheet fully reconciles: books → JSON → portal support (both residuals 0)", "₹0 · ₹0", `${fmt(bridge.residual0)} · ${fmt(bridge.residual)}`, Math.abs(bridge.residual0) < 1 && Math.abs(bridge.residual) < 1);
+  add("C16", "All portal credit/debit notes are in the sales sheet (Table 12 net of CDN)", "0 unmatched", `${einv.cdnr.filter((c) => !sales.inv[c.nt_num]).length}`, !einv.cdnr.filter((c) => !sales.inv[c.nt_num]).length);
+  add("C17", "JSON B2B taxable == client Sales B2B taxable (JSON built from the books)", fmt(salesB2b.reduce((a, d) => a + d.txbl, 0)), fmt(jsonB2bTxbl), Math.abs(jsonB2bTxbl - salesB2b.reduce((a, d) => a + d.txbl, 0)) < 1);
+  add("C18", "JSON B2B − credit notes taxable == Table-12 hsn_b2b taxable", fmt(sum(t12B2b, "txval")), fmt(jsonB2bTxbl - jsonCdnTxbl), Math.abs(jsonB2bTxbl - jsonCdnTxbl - sum(t12B2b, "txval")) < 1);
+  add("C19", "Zero-value dispatch documents excluded from B2B JSON (kept in Table 13)", "info", `${zeroDocs.length} docs: ${zeroDocs.slice(0, 8)}${zeroDocs.length > 8 ? "…" : ""}`, true);
+  const docErrCells = docErrors.reduce((a, x) => a + Object.keys(x.errs).length, 0);
+  add("C20", "Every JSON document passes portal field validation (GSTIN/date/POS/value/tax-split)", "0 errors", `${docErrCells} error(s) across ${docErrors.length} doc(s): ${docErrors.slice(0, 4).map((x) => x.inum)}`, !docErrors.length);
 
   const fails = checks.filter((c) => !c.ok);
-  const blocking = new Set(["C1", "C2", "C3", "C7", "C8", "C10"]); // portal-blocking vs deviation-only
+  const blocking = new Set(["C1", "C2", "C3", "C3f", "C4", "C7", "C8", "C10", "C12", "C17", "C18", "C20"]); // portal-blocking vs deviation-only
   const blockingFails = fails.filter((c) => blocking.has(c.id));
   const allPass = fails.length === 0;
   const portalReady = blockingFails.length === 0;
 
-  // ----- GSTR-1 JSON (portal schema) -----
-  const json = buildJson({ gstin, fp, validInv, cdnr: einv.cdnr, t12, t12B2b, t12B2c, t13, version: opts.version || "GST3.1.2" });
+  // ----- GSTR-1 JSON (portal schema) — built ENTIRELY from the client's books -----
+  const json = buildJson({ gstin, fp, b2bDocs: jsonB2b, cnDocs: jsonCdnr, t12, t12B2b, t12B2c, t13, version: opts.version || "GST3.1.2" });
 
   return {
-    meta: { gstin, fp, period: opts.periodLabel || "", entity: opts.entity || Object.values(einv.b2b)[0]?.gstin ? "" : "", supplierName: opts.entity || "" },
+    meta: { gstin, fp, period: opts.periodLabel || "", entity: opts.entity || "", supplierName: opts.entity || "", supplierState },
     scope: einv.scope,
     counts: {
       einvB2bInvoices: b2bAll.length, validInvoices: validInv.length, cancelled: cancelled.length,
-      cdnr: einv.cdnr.length, salesInvoices: Object.keys(sales.inv).length, salesRows: sales.rows, hsnRows: t12.length,
+      cdnr: jsonCdnr.length, salesInvoices: Object.keys(sales.inv).length, salesRows: sales.rows, hsnRows: t12.length,
+      jsonB2bInvoices: jsonB2b.length, zeroDocs: zeroDocs.length,
     },
-    totals: { t12Txbl: round2(t12Txbl), t12Igst: round2(sum(t12, "iamt")), t12Cgst: round2(sum(t12, "camt")), t12Sgst: round2(sum(t12, "samt")), t12Cess: round2(sum(t12, "csamt")), validB2bTxbl: round2(validB2bTxbl), cdnTxbl: round2(cdnTxbl), salesValidTxbl: round2(salesValidTxbl) },
+    totals: {
+      t12Txbl: round2(t12Txbl), t12Igst: round2(sum(t12, "iamt")), t12Cgst: round2(sum(t12, "camt")), t12Sgst: round2(sum(t12, "samt")), t12Cess: round2(sum(t12, "csamt")),
+      validB2bTxbl: round2(validB2bTxbl), cdnTxbl: round2(cdnTxbl), salesValidTxbl: round2(salesValidTxbl),
+      jsonB2bTxbl: round2(jsonB2bTxbl), jsonCdnTxbl: round2(jsonCdnTxbl),
+    },
     table12: t12, table13: t13, bridge,
     cancelled, cdnr: einv.cdnr,
+    jsonDocs, docErrors, zeroDocs,
     cancelledDetail: cancelled.map((inum) => ({
       inum, name: sales.inv[inum]?.name || einv.b2b[inum]?.name || "",
       gstin: sales.inv[inum] ? [...sales.inv[inum].gstin][0] || "" : (einv.b2b[inum]?.gstin || ""),
       txbl: round2(sales.inv[inum]?.txbl || 0), portalStatus: einv.b2b[inum]?.status || "",
     })).sort((a, b) => b.txbl - a.txbl),
-    recon: { missingInSales, valMismatch, nonRevButEinvoiced, salesValidTxbl: round2(salesValidTxbl), portalValidTxbl: round2(validB2bTxbl), diff: round2(salesValidTxbl - validB2bTxbl) },
+    recon: { missingInSales, valMismatch, nonRevButEinvoiced, notEinvoiced, salesValidTxbl: round2(salesValidTxbl), portalValidTxbl: round2(validB2bTxbl), diff: round2(salesValidTxbl - validB2bTxbl) },
     fileOverview,
     checks, fails, blockingFails, allPass, portalReady, errors,
     json,
@@ -448,41 +574,29 @@ export function processGstr1(einvWb, salesWb, opts = {}) {
 function sum(arr, key) { return arr.reduce((a, x) => a + (x[key] || 0), 0); }
 function fmt(n) { return Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-// ---------------- JSON builder ----------------
-function buildJson({ gstin, fp, validInv, cdnr, t12, t12B2b, t12B2c, t13, version }) {
+// ---------------- JSON builder — every number comes from the client's books ----------------
+export function buildJson({ gstin, fp, b2bDocs, cnDocs, t12, t12B2b, t12B2c, t13, version }) {
   // b2b grouped by recipient GSTIN
   const byCtin = {};
-  for (const d of validInv) {
-    const ctin = d.gstin;
-    (byCtin[ctin] ||= []).push(d);
-  }
-  const b2b = Object.entries(byCtin).map(([ctin, invs]) => ({
+  for (const d of b2bDocs) (byCtin[d.ctin] ||= []).push(d);
+  const b2b = Object.entries(byCtin).map(([ctin, docs]) => ({
     ctin,
-    inv: invs.map((d) => {
-      // group items by rate
-      const byRate = {};
-      for (const it of d.items) {
-        const k = it.rt;
-        const a = (byRate[k] ||= { rt: it.rt, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
-        a.txval += it.txval; a.iamt += it.iamt; a.camt += it.camt; a.samt += it.samt; a.csamt += it.csamt;
-      }
-      return {
-        inum: d.inum, idt: ddmmyyyy(d.date), val: round2(d.val), pos: posCode(d.pos),
-        rchrg: d.rchrg === "Y" ? "Y" : "N", inv_typ: mapInvType(d.invType),
-        itms: Object.values(byRate).map((a, i) => ({ num: i + 1, itm_det: { rt: a.rt, txval: round2(a.txval), iamt: round2(a.iamt), camt: round2(a.camt), samt: round2(a.samt), csamt: round2(a.csamt) } })),
-      };
-    }),
+    inv: docs.map((d) => ({
+      inum: d.inum, idt: d.idt, val: round2(d.val), pos: d.pos,
+      rchrg: d.rchrg === "Y" ? "Y" : "N", inv_typ: d.invTyp,
+      itms: d.items.map((a, i) => ({ num: i + 1, itm_det: { rt: a.rt, txval: round2(a.txval), iamt: round2(a.iamt), camt: round2(a.camt), samt: round2(a.samt), csamt: round2(a.csamt) } })),
+    })),
   }));
 
-  // cdnr grouped by recipient GSTIN
+  // cdnr grouped by recipient GSTIN (positive numbers; ntty determines sign on the portal)
   const cByCtin = {};
-  for (const c of cdnr) (cByCtin[c.gstin] ||= []).push(c);
+  for (const c of cnDocs) (cByCtin[c.ctin] ||= []).push(c);
   const cdnrJson = Object.entries(cByCtin).map(([ctin, notes]) => ({
     ctin,
     nt: notes.map((c) => ({
-      ntty: c.ntty, nt_num: c.nt_num, nt_dt: ddmmyyyy(c.nt_dt), val: round2(c.val), pos: posCode(c.pos),
-      rchrg: c.rchrg === "Y" ? "Y" : "N", inv_typ: mapInvType(c.invType),
-      itms: c.items.map((it, i) => ({ num: i + 1, itm_det: { rt: it.rt, txval: round2(it.txval), iamt: round2(it.iamt), camt: round2(it.camt), samt: round2(it.samt), csamt: round2(it.csamt) } })),
+      ntty: c.ntty || "C", nt_num: c.inum, nt_dt: c.idt, val: round2(Math.abs(c.val)), pos: c.pos,
+      rchrg: c.rchrg === "Y" ? "Y" : "N", inv_typ: c.invTyp,
+      itms: c.items.map((it, i) => ({ num: i + 1, itm_det: { rt: it.rt, txval: round2(Math.abs(it.txval)), iamt: round2(Math.abs(it.iamt)), camt: round2(Math.abs(it.camt)), samt: round2(Math.abs(it.samt)), csamt: 0 } })),
     })),
   }));
 
