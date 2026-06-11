@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { build, validate, writeWorkbook, splitExports, makeExtraRow, pyRound } from "./engine.js";
+import { build, validate, writeWorkbook, splitExports, makeExtraRow, pyRound, loadSalary } from "./engine.js";
 import { isEncrypted, decryptOffice } from "./decrypt.js";
 import { buildApac, saveApac, writeManualReport, writeRecoReport } from "./apac.js";
 import "./salaryoa.css";
@@ -84,9 +84,26 @@ export default function SalaryOA() {
 
   const appendLog = (m) => setLog((prev) => [...prev, m]);
 
-  const employeeOptions = oaResult
-    ? oaResult.run.employees.map((e) => ({ code: e.code, label: `${e.code} — ${e.name}` }))
-    : [];
+  // Employee dropdown for loan EMIs — parsed straight from the salary register
+  // on selection, so codes are pickable before the first generate.
+  const [registerEmployees, setRegisterEmployees] = useState([]);
+  const onSalaryFile = async (f) => {
+    setSalaryFile(f);
+    setRegisterEmployees([]);
+    if (!f) return;
+    try {
+      const emps = loadSalary(await f.arrayBuffer());
+      setRegisterEmployees(emps);
+      appendLog(`Salary register read: ${emps.length} employees (loan dropdown ready).`);
+    } catch (exc) {
+      appendLog(`Could not pre-read salary register: ${exc.message || exc}`);
+    }
+  };
+
+  const employeeOptions = (oaResult ? oaResult.run.employees : registerEmployees).map((e) => ({
+    code: e.code,
+    label: `${e.code} — ${e.name}`,
+  }));
 
   const monthSuffix = monthLabel.trim() ? ` - ${monthLabel.trim()}` : "";
 
@@ -254,7 +271,7 @@ export default function SalaryOA() {
       <section className="card">
         <h2 className="soa-step-title"><span className="soa-step-no">1</span> Inputs</h2>
         <FilePick label="Salary register" required accept=".xls,.xlsx,.xlsm" file={salaryFile}
-          onFile={setSalaryFile} hint="Sal-*.xls from the payroll consultant" />
+          onFile={onSalaryFile} hint="Sal-*.xls from the payroll consultant" />
         <FilePick label="PF MIS report" required accept=".xls,.xlsx" file={pfFile}
           onFile={setPfFile} hint="pfreport*.xls — needs PF Ac. 1 / Admin Ac. 2 / EDLI Ac. 21" />
         <div className="soa-meta-row">
@@ -266,8 +283,8 @@ export default function SalaryOA() {
         <details className="soa-sub">
           <summary>Loan EMIs recovered this month ({loans.filter((l) => l.code && Number(l.amount)).length})</summary>
           <p className="soa-hint">
-            Enter the employee code and EMI amount. Becomes a negative LOANRECOVERY row in the OA and flows
-            to APAC column BX. (Generate the OA once first to see the code → name list in the dropdown.)
+            Pick the employee and enter the EMI amount. Becomes a negative LOANRECOVERY row in the OA and
+            flows to APAC column BX. The dropdown fills as soon as the salary register is selected.
           </p>
           {loans.map((ln, i) => (
             <div key={i} className="soa-inline-row">
