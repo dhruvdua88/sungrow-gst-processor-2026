@@ -1,0 +1,186 @@
+/* Salary OA / APAC tab — follows App.css visual language */
+
+.soa {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.soa-howto h2 {
+  margin-top: 0;
+}
+.soa-howto ol {
+  margin: 10px 0 8px;
+  padding-left: 22px;
+  line-height: 1.55;
+}
+.soa-howto li + li {
+  margin-top: 8px;
+}
+.soa-note-line {
+  font-size: 0.86rem;
+  color: #5b6675;
+  margin: 10px 0 0;
+}
+
+.soa-step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 0;
+}
+.soa-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #305496;
+  color: #fff;
+  font-size: 0.9rem;
+  flex: 0 0 auto;
+}
+
+.soa-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.soa-file-label {
+  flex: 0 0 190px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.soa-req {
+  color: #c0392b;
+  margin-left: 3px;
+}
+.soa-file-entry {
+  flex: 1;
+  border: 1px dashed #b8c2d0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.86rem;
+  color: #7a8595;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.soa-file-entry.filled {
+  border-style: solid;
+  color: #1d2733;
+  background: #f2f7ff;
+}
+.soa-browse,
+.soa-add {
+  border: 1px solid #b8c2d0;
+  background: #fff;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.soa-browse:hover,
+.soa-add:hover {
+  background: #eef3fa;
+}
+.soa-clear {
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #8a93a3;
+}
+.soa-clear:hover {
+  color: #c0392b;
+}
+
+.soa-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.soa-meta-row label {
+  flex: 0 0 190px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.soa-input {
+  border: 1px solid #b8c2d0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.88rem;
+  flex: 1;
+  min-width: 0;
+}
+.soa-amt {
+  flex: 0 0 140px;
+}
+.soa-cat {
+  flex: 0 0 130px;
+}
+
+.soa-sub {
+  margin: 10px 0;
+  border: 1px solid #e3e8ef;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.soa-sub summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.soa-hint {
+  font-size: 0.82rem;
+  color: #5b6675;
+  margin: 8px 0;
+}
+.soa-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.soa-add {
+  margin-top: 6px;
+}
+
+.soa-dl-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.soa-dl {
+  border: 1px solid #305496;
+  color: #305496;
+  background: #fff;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.soa-dl:hover {
+  background: #eef3fa;
+}
+
+.soa-block-title {
+  margin: 14px 0 8px;
+}
+.soa-fail-row td {
+  background: #fdecea;
+}
+.soa-warn-line {
+  font-size: 0.86rem;
+  color: #8a6d3b;
+  background: #fcf8e3;
+  border: 1px solid #f5e8c8;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 12px;
+}
