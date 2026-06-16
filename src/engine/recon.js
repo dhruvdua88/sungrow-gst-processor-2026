@@ -152,7 +152,102 @@ export function itcRows(invoices, periodLabel, fyLabel) {
     inv.support.isd_supplier_gstin || "",
     inv.support.isd_bill_tax !== undefined ? inv.support.isd_bill_tax : "",
     inv.support.isd_tax_diff !== undefined ? inv.support.isd_tax_diff : "",
+    inv.support.appearing_in_isd || "No",
   ]);
+}
+
+// ISD-return vs Sanitized-ITC roll-up, mirroring build2bBooksSummary so the
+// "ISD vs Books Summary" sheet reads in the same shape as "2B vs Books Summary".
+// Left side = ISD return bill totals (per supplier GSTIN); right side = the
+// Sanitized ITC tax booked under that same GSTIN (overlap signal).
+export function buildIsdBooksSummary(isdDocs, invoices) {
+  const booksByGstin = new Map();
+  for (const inv of invoices) {
+    const g = asText(inv.resolved_gstin || inv.source_gstin).toUpperCase();
+    if (!g || g === "IMPORTGOODS" || g === "IMPORTSERVICE") continue;
+    const b = booksByGstin.get(g) || { tax: 0, count: 0 };
+    b.tax = round2(b.tax + inv.total_tax);
+    b.count += 1;
+    booksByGstin.set(g, b);
+  }
+
+  const buckets = new Map();
+  for (const d of isdDocs) {
+    const g = asText(d.gstin).toUpperCase();
+    if (!buckets.has(g)) {
+      buckets.set(g, {
+        gstin: g, party: d.party,
+        isd_count: 0, isd_taxable: 0, isd_igst: 0, isd_cgst: 0, isd_sgst: 0, isd_tax: 0,
+        eligible: 0, ineligible: 0, unclassified: 0,
+        matched_bills: 0,
+      });
+    }
+    const b = buckets.get(g);
+    b.isd_count += 1;
+    b.isd_taxable = round2(b.isd_taxable + d.taxable);
+    b.isd_igst = round2(b.isd_igst + d.igst);
+    b.isd_cgst = round2(b.isd_cgst + d.cgst);
+    b.isd_sgst = round2(b.isd_sgst + d.sgst);
+    b.isd_tax = round2(b.isd_tax + d.total_tax);
+    if (d.eligibility === "Eligible") b.eligible += 1;
+    else if (d.eligibility === "Ineligible") b.ineligible += 1;
+    else b.unclassified += 1;
+    if (d.matched) b.matched_bills += 1;
+  }
+
+  const rows = [];
+  for (const b of buckets.values()) {
+    const books = booksByGstin.get(b.gstin) || { tax: 0, count: 0 };
+    const inBooks = books.count > 0;
+    const status = b.matched_bills > 0
+      ? "Invoice in ISD & Books"
+      : inBooks ? "GSTIN in ISD & Books" : "In ISD only";
+    const eligTag = b.unclassified
+      ? "Unclassified"
+      : b.eligible && b.ineligible ? "Mixed" : b.eligible ? "Eligible" : "Ineligible";
+    const action = b.matched_bills > 0
+      ? "Bill also in books — avoid double ITC; credit flows via ISD distribution."
+      : inBooks
+        ? "Supplier GSTIN also in books — confirm these ISD bills are not re-claimed directly."
+        : "ISD-distributed credit only; no direct entry in books (expected).";
+    rows.push([
+      status, b.gstin, b.party, eligTag,
+      b.isd_count, books.count,
+      b.isd_taxable, b.isd_igst, b.isd_cgst, b.isd_sgst, b.isd_tax,
+      round2(books.tax),
+      action,
+    ]);
+  }
+  return rows.sort((a, b) => {
+    const rank = (s) => (s === "In ISD only" ? 2 : 0);
+    if (rank(a[0]) !== rank(b[0])) return rank(a[0]) - rank(b[0]);
+    return asText(a[1]).localeCompare(asText(b[1]));
+  });
+}
+
+// Control totals straight from the GSTR-6 itc_bal block (eligible / ineligible /
+// total ITC distributed), so the ISD summary carries the same kind of control
+// figures the 2B reconciliation ties to.
+export function isdControlTotals(itcBal) {
+  if (!itcBal) return null;
+  const part = (o) => {
+    const g = o || {};
+    const igst = round2(asNum(g.iamt));
+    const cgst = round2(asNum(g.camt) || asNum(g.camtc));
+    const sgst = round2(asNum(g.samt) || asNum(g.samts));
+    return { igst, cgst, sgst, total: round2(igst + cgst + sgst) };
+  };
+  return {
+    period: asText(itcBal.ret_period),
+    eligible: part(itcBal.elgitc),
+    ineligible: part(itcBal.inelgitc),
+    total: part(itcBal.totalItc),
+  };
+}
+
+function asNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export function r2bRows(docs, periodLabel, fyLabel) {

@@ -215,4 +215,15 @@ export function applyIsdMatches(invoices, isdDocs) {
     d.gstin_in_itc = gstinRows.length > 0;
     d.sanitized_gstin_tax = round2(gstinRows.reduce((s, i) => s + i.total_tax, 0));
   }
+
+  // Mark every Sanitized ITC row with how it relates to the ISD return:
+  //   "Invoice in ISD" (this bill's doc no is in the ISD b2b) >
+  //   "GSTIN in ISD"   (same supplier GSTIN appears in the ISD return) > "No".
+  const isdGstins = new Set(isdDocs.map((d) => asText(d.gstin).toUpperCase()).filter(Boolean));
+  for (const inv of invoices) {
+    const g = asText(inv.resolved_gstin || inv.source_gstin).toUpperCase();
+    if (inv.support.isd_flag === "ISD") inv.support.appearing_in_isd = "Invoice in ISD";
+    else if (g && isdGstins.has(g)) inv.support.appearing_in_isd = "GSTIN in ISD";
+    else inv.support.appearing_in_isd = "No";
+  }
 }

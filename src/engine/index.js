@@ -13,6 +13,7 @@ import {
 import { buildLedgerTie } from "./ledger.js";
 import {
   build2bBooksSummary, build2bBooksDetail, buildCorrectionRows,
+  buildIsdBooksSummary, isdControlTotals,
   itcRows, r2bRows, isdRows, boeRows,
 } from "./recon.js";
 import { assembleWorkbook, outputFileName } from "./workbook.js";
@@ -99,6 +100,8 @@ export async function buildWorkbook(inputs) {
     boeRowsData: boeRows(boeDocs),
     twoBSummaryRows: build2bBooksSummary(nonIsd, r2bDocs),
     twoBDetailRows: build2bBooksDetail(nonIsd, r2bDocs),
+    isdBooksSummaryRows: buildIsdBooksSummary(isdDocs, invoices),
+    isdControl: isdControlTotals(isdJson && isdJson.itc_bal),
   });
 
   // ---- In-browser preview data (mirrors the Dashboard sheet blocks) ----

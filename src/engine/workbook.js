@@ -398,7 +398,7 @@ export async function assembleWorkbook(ctx) {
     boeDocs, isdDocs, isdDist, isdEligibilitySummary,
     periodLabel, fyLabel,
     itcRowsData, r2bRowsData, isdRowsData, isdEligibleRowsData, boeRowsData,
-    twoBSummaryRows, twoBDetailRows,
+    twoBSummaryRows, twoBDetailRows, isdBooksSummaryRows = [], isdControl = null,
   } = ctx;
 
   const wb = new ExcelJS.Workbook();
@@ -413,7 +413,8 @@ export async function assembleWorkbook(ctx) {
     "Place of Supply", "Reverse Charge", "ITC Availability", "Type",
     "3B Month", "Books Month", "Invoice Match", "GSTIN Match", "FY",
     "Support Reference",
-    "ISD Flag", "ISD Supplier GSTIN", "ISD Bill Tax", "Books Tax - ISD Bill Tax"];
+    "ISD Flag", "ISD Supplier GSTIN", "ISD Bill Tax", "Books Tax - ISD Bill Tax",
+    "Appearing in ISD"];
   let ws = wb.addWorksheet("Sanitized ITC");
   writeSheet(ws, itcHeaders, itcRowsData, "SanitizedITC");
   formatNumbers(ws, [5, 6, 7, 8, 9, 22, 23], [4]);
@@ -463,6 +464,51 @@ export async function assembleWorkbook(ctx) {
       ws.getCell(last + 5, 1).value = "Warning";
       ws.getCell(last + 5, 2).value = isdEligibilitySummary.warning;
       ws.getCell(last + 5, 2).fill = solid(WARN);
+    }
+  }
+
+  // ISD vs Books Summary — same shape as "2B vs Books Summary", ISD side on the
+  // left, sanitized-ITC overlap on the right, plus itc_bal control totals.
+  if (isdDocs.length) {
+    const isdSummaryHeaders = ["Status", "Supplier GSTIN", "Party", "Eligibility",
+      "ISD Bill Count", "Books Invoice Count",
+      "ISD Taxable", "ISD IGST", "ISD CGST", "ISD SGST", "ISD Total Tax",
+      "Books Tax (same GSTIN)", "Suggested Action"];
+    ws = wb.addWorksheet("ISD vs Books Summary");
+    writeSheet(ws, isdSummaryHeaders, isdBooksSummaryRows, "ISDBooksSummary");
+    formatNumbers(ws, [7, 8, 9, 10, 11, 12]);
+
+    // Control totals from GSTR-6 itc_bal
+    if (isdControl) {
+      let r = ws.rowCount + 2;
+      const head = (label) => {
+        ws.getCell(r, 1).value = label;
+        ws.getCell(r, 1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+        ws.getCell(r, 1).fill = solid(BLUE);
+        for (let c = 2; c <= 5; c++) ws.getCell(r, c).fill = solid(BLUE);
+        r += 1;
+      };
+      const line = (label, p) => {
+        ws.getCell(r, 1).value = label;
+        const vals = [p.igst, p.cgst, p.sgst, p.total];
+        vals.forEach((v, i) => {
+          const cell = ws.getCell(r, 2 + i);
+          cell.value = v;
+          cell.numFmt = "#,##0.00";
+        });
+        r += 1;
+      };
+      head(`GSTR-6 ITC control totals (period ${isdControl.period})`);
+      ws.getCell(r, 1).value = "Bucket";
+      ws.getCell(r, 2).value = "IGST";
+      ws.getCell(r, 3).value = "CGST";
+      ws.getCell(r, 4).value = "SGST";
+      ws.getCell(r, 5).value = "Total";
+      for (let c = 1; c <= 5; c++) ws.getCell(r, c).font = { bold: true };
+      r += 1;
+      line("Eligible distributed (ISD-004)", isdControl.eligible);
+      line("Ineligible (ISD-003)", isdControl.ineligible);
+      line("Total ITC", isdControl.total);
     }
   }
 
