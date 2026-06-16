@@ -1,6 +1,6 @@
 // Excel reading via SheetJS — mirrors read_sheet_rows / read_gl_rows
 import * as XLSX from "xlsx";
-import { asText, TARGET_COMPANY_CODE } from "./helpers.js";
+import { asText, TARGET_COMPANY_ALIASES } from "./helpers.js";
 
 export function workbookFromArrayBuffer(buffer) {
   return XLSX.read(buffer, { type: "array", cellDates: true });
@@ -29,6 +29,6 @@ export function readSheetRows(wb, sheetName) {
 export function readGlRows(gstWorkbook) {
   return readSheetRows(gstWorkbook, "GL Summary").filter((row) => {
     const code = asText(row["Company Code"]);
-    return !code || code === TARGET_COMPANY_CODE;
+    return !code || TARGET_COMPANY_ALIASES.has(code.toUpperCase());
   });
 }

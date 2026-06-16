@@ -217,8 +217,30 @@ export default function App() {
         onProgress: appendLog,
       });
 
-      // Download the focused workbook
-      downloadWorkbook(res);
+      // Surface engine warnings (e.g. a source sheet whose rows were all dropped
+      // by the company-code filter) and let the operator decide before relying on output.
+      const warns = res.warnings || [];
+      const hasError = warns.some((w) => w.severity === "error");
+      for (const w of warns) appendLog(`⚠ [${w.sheet}] ${w.title} — ${w.detail}`);
+      if (warns.length) {
+        const msg = warns.map((w) => `• [${w.sheet}] ${w.title}\n  ${w.detail}`).join("\n\n");
+        if (hasError) {
+          appendLog(
+            "Auto-download skipped — output is likely incomplete. Fix the source file and re-run, " +
+              "or use “Download workbook again” to override."
+          );
+          alert(
+            `Data issue detected — output likely INCOMPLETE\n\n${msg}\n\n` +
+              "The workbook was NOT downloaded automatically. Fix the source and re-run, " +
+              "or click “Download workbook again” if you want it anyway."
+          );
+        } else {
+          alert(`Heads up — review before filing\n\n${msg}`);
+          downloadWorkbook(res);
+        }
+      } else {
+        downloadWorkbook(res);
+      }
 
       // Same success log lines as the desktop tool
       appendLog(`Created: ${res.output}`);
@@ -392,6 +414,21 @@ export default function App() {
                 ⬇ Download workbook again
               </button>
             </div>
+            {(result.warnings || []).length > 0 && (
+              <div className="warn-banner">
+                <strong>
+                  ⚠ {result.warnings.length} data issue
+                  {result.warnings.length > 1 ? "s" : ""} detected — review before filing
+                </strong>
+                <ul>
+                  {result.warnings.map((w, i) => (
+                    <li key={i} className={w.severity === "error" ? "warn-item err" : "warn-item"}>
+                      <span className="warn-sheet">[{w.sheet}]</span> <b>{w.title}.</b> {w.detail}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="stats-grid">
               {result.preview.cards.map((c) => (
                 <div key={c.label} className={`stat ${c.warn ? "warn" : ""}`}>

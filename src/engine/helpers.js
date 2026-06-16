@@ -1,6 +1,17 @@
 // Generic helpers ported 1:1 from build_sipl_gst_itc_tracker.py
 
 export const TARGET_COMPANY_CODE = "2081";
+// Some monthly exports put a branch/state NAME in the "Company Code" column instead
+// of the numeric SAP code (e.g. Non PO sheet shows "Kartaka"/"Karnataka", not "2081").
+// Accept any of these aliases (normalized upper-case) as the target branch.
+export const TARGET_COMPANY_ALIASES = new Set([
+  "2081", "KARNATAKA", "KARTAKA",
+]);
+// Other SIPL branches that legitimately appear in shared exports and should be
+// dropped *silently* (not flagged as "unrecognised"). 2080=Haryana, 2084=Rajasthan.
+export const KNOWN_OTHER_BRANCHES = new Set([
+  "2080", "HARYANA", "2084", "RAJASTHAN",
+]);
 export const RECIPIENT_GSTIN = "29AAXCS2197N1Z4"; // SIPL Karnataka - the entity whose books these are
 
 // Reverse-charge ledger evidence

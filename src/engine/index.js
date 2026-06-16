@@ -65,7 +65,9 @@ export async function buildWorkbook(inputs) {
   const isdDist = loadIsdDistributions(isdJson);
 
   onProgress("Aggregating source invoices (PO + Non PO + Import)...");
-  const invoices = aggregateSourceRows(glRows, gstWorkbook);
+  const warnings = [];
+  const invoices = aggregateSourceRows(glRows, gstWorkbook, warnings);
+  for (const w of warnings) onProgress(`⚠ ${w.sheet}: ${w.title}`);
 
   onProgress("Resolving invoices against 2B...");
   resolveAll(invoices, r2bDocs);
@@ -197,6 +199,7 @@ export async function buildWorkbook(inputs) {
   return {
     buffer,
     preview,
+    warnings,
     output: outputFileName(periodLabel, fyLabel),
     invoice_count: invoices.length,
     r2b_count: r2bDocs.length,

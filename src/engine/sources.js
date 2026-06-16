@@ -1,7 +1,8 @@
 // Source-row aggregation (PO + Non PO + Import) — mirrors aggregate_source_rows
 import {
   asText, asFloat, normDoc, cleanName, parseDate, taxTotal, round2,
-  TARGET_COMPANY_CODE, RCM_ACCOUNTS_LEDGER,
+  TARGET_COMPANY_CODE, TARGET_COMPANY_ALIASES, KNOWN_OTHER_BRANCHES,
+  RCM_ACCOUNTS_LEDGER,
 } from "./helpers.js";
 import { readSheetRows } from "./readers.js";
 
@@ -54,12 +55,20 @@ function buildReverseDocSet(glRows) {
   return reverse;
 }
 
-export function aggregateSourceRows(glRows, gstWorkbook) {
+export function aggregateSourceRows(glRows, gstWorkbook, warnings = []) {
   const glDate = buildDocDateLookup(glRows);
   const reverseDocs = buildReverseDocSet(glRows);
   const invoices = new Map(); // key string -> SourceInvoice
 
   const TRUTHY_RCM = new Set(["Y", "YES", "TRUE", "1"]);
+
+  // Non PO company-filter diagnostics — catch the case where a month's export
+  // labels the "Company Code" column with branch names we don't recognize, so
+  // every otherwise-valid row gets silently dropped.
+  let nonPoSeen = 0; // otherwise-valid rows reaching the company gate
+  let nonPoKept = 0; // rows that passed the company gate
+  const droppedCompanies = new Map(); // raw company value -> count (dropped by gate)
+  const unrecognized = new Map();     // dropped codes that aren't a known sibling branch
 
   // --- PO sheet ---
   for (const row of readSheetRows(gstWorkbook, "PO")) {
@@ -101,12 +110,23 @@ export function aggregateSourceRows(glRows, gstWorkbook) {
 
   // --- Non PO sheet ---
   for (const row of readSheetRows(gstWorkbook, "Non PO")) {
-    const company = asText(row["Company Code"]);
-    if (company && company !== TARGET_COMPANY_CODE) continue;
     if (asText(row["Supplier Name"]).toUpperCase() === "NA") continue;
     if (!asText(row["Document No"])) continue;
     const tax = taxTotal(row["IGST Amount"], row["CGST Amount"], row["SGST Amount"]);
     if (Math.abs(tax) < 0.005) continue;
+    // "Company Code" may hold the numeric SAP code OR a branch/state name,
+    // depending on how the month's Non PO sheet was exported. Match by alias set.
+    // Count drops so the UI can warn if an unexpected label nukes every row.
+    const company = asText(row["Company Code"]);
+    nonPoSeen += 1;
+    if (company && !TARGET_COMPANY_ALIASES.has(company.toUpperCase())) {
+      droppedCompanies.set(company, (droppedCompanies.get(company) || 0) + 1);
+      if (!KNOWN_OTHER_BRANCHES.has(company.toUpperCase())) {
+        unrecognized.set(company, (unrecognized.get(company) || 0) + 1);
+      }
+      continue;
+    }
+    nonPoKept += 1;
     const docNo = asText(row["Document No"]);
     const ref = asText(row["Reference"]) || docNo;
     const supplier = asText(row["Supplier Name"]);
@@ -142,6 +162,34 @@ export function aggregateSourceRows(glRows, gstWorkbook) {
     item.cgst += asFloat(row["CGST Amount"]);
     item.sgst += asFloat(row["SGST Amount"]);
     item.total_tax = taxTotal(item.igst, item.cgst, item.sgst);
+  }
+
+  // Surface company-filter problems so the operator can confirm in the UI.
+  const fmtCodes = (m) =>
+    [...m.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => `"${c}" (${n})`).join(", ");
+  if (nonPoSeen > 0 && nonPoKept === 0) {
+    warnings.push({
+      severity: "error",
+      sheet: "Non PO",
+      title: "All Non PO rows were dropped by the company-code filter",
+      detail:
+        `Every one of the ${nonPoSeen} otherwise-valid Non PO rows was excluded because its ` +
+        `"Company Code" value did not match target ${TARGET_COMPANY_CODE} ` +
+        `(accepted: ${[...TARGET_COMPANY_ALIASES].join(", ")}). ` +
+        `Values seen: ${fmtCodes(droppedCompanies)}. ` +
+        `This usually means the export labelled the column with a branch name spelling we don't ` +
+        `recognise. Add the correct spelling to TARGET_COMPANY_ALIASES (helpers.js) and re-run.`,
+    });
+  } else if (unrecognized.size > 0) {
+    warnings.push({
+      severity: "warn",
+      sheet: "Non PO",
+      title: "Some Non PO rows dropped with unrecognised company codes",
+      detail:
+        `${nonPoKept} rows kept, but these "Company Code" values were dropped and are neither the ` +
+        `target branch nor a known sibling branch: ${fmtCodes(unrecognized)}. ` +
+        `Confirm they really belong to another entity; if not, add them to TARGET_COMPANY_ALIASES.`,
+    });
   }
 
   return Array.from(invoices.values());

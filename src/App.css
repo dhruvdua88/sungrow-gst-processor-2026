@@ -333,6 +333,42 @@ body {
   border-color: #fecaca;
 }
 
+.warn-banner {
+  margin: 4px 0 16px;
+  padding: 12px 14px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-left: 4px solid #ea580c;
+  border-radius: 6px;
+  color: #7c2d12;
+  font-size: 13px;
+}
+
+.warn-banner > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #9a3412;
+}
+
+.warn-banner ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.warn-banner .warn-item {
+  margin: 4px 0;
+  line-height: 1.45;
+}
+
+.warn-banner .warn-item.err {
+  color: #b91c1c;
+}
+
+.warn-banner .warn-sheet {
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .stat-label {
   font-size: 11px;
   font-weight: 700;
