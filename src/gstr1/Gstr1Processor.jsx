@@ -113,6 +113,8 @@ function ChecksTable({ res }) {
 
 function Deviations({ res }) {
   const r = res.recon;
+  const d = r.direction || { underCount: 0, underAmt: 0, overCount: 0, overAmt: 0, netUnderReported: 0 };
+  const dups = r.duplicates || [];
   return (
     <div className="g1-dev">
       <div className="g1-recon-grid">
@@ -122,22 +124,48 @@ function Deviations({ res }) {
       </div>
 
       {r.valMismatch.length > 0 && (
+        <div className="g1-recon-grid" style={{ marginTop: 10 }}>
+          <div className="diffbad"><span>Understated (portal &gt; book) — {d.underCount} inv</span><b>{inr(d.underAmt)}</b></div>
+          <div className="diffok"><span>Overstated (book &gt; portal) — {d.overCount} inv</span><b>{inr(d.overAmt)}</b></div>
+          <div className={d.netUnderReported > 1 ? "diffbad" : "diffok"}><span>Net under-reported vs portal</span><b>{inr(d.netUnderReported)}</b></div>
+        </div>
+      )}
+
+      {dups.length > 0 && (
         <>
-          <h4 className="g1-dev-h bad">⚠ Value mismatches — client book vs portal e-invoice (ask Naveen)</h4>
-          <table className="g1-table"><thead><tr><th>Invoice</th><th>Recipient</th><th className="num">Sales book</th><th className="num">e-Invoice (portal)</th><th className="num">Difference</th></tr></thead>
-            <tbody>{r.valMismatch.map((m) => (<tr key={m.inum} className="row-bad"><td>{m.inum}</td><td className="left">{m.name}</td><td className="num">{inr(m.sales)}</td><td className="num">{inr(m.portal)}</td><td className="num">{inr(m.diff)}</td></tr>))}</tbody>
+          <h4 className="g1-dev-h bad">⛔ Portal duplicate IRNs (C21) — do NOT add to the sales book</h4>
+          <table className="g1-table"><thead><tr><th>Portal invoice</th><th>Duplicate of (book)</th><th className="num">Taxable</th><th className="left">Action</th></tr></thead>
+            <tbody>{dups.map((x) => (<tr key={x.portalNo} className="row-bad"><td>{x.portalNo}</td><td>{x.duplicateOf}</td><td className="num">{inr(x.taxable)}</td><td className="left small">{x.action}</td></tr>))}</tbody>
+          </table>
+        </>
+      )}
+
+      {r.valMismatch.length > 0 && (
+        <>
+          <h4 className="g1-dev-h bad">⚠ Matched-invoice value deviations — book vs portal e-invoice (confirm with client)</h4>
+          <table className="g1-table"><thead><tr><th>Invoice</th><th>Recipient</th><th className="num">Sales book</th><th className="num">e-Invoice (portal)</th><th className="num">Portal − Book</th><th className="left">Finding</th></tr></thead>
+            <tbody>{r.valMismatch.map((m) => (
+              <tr key={m.inum} className={m.dir === "under" ? "row-bad" : "row-warn"}>
+                <td>{m.inum}</td><td className="left">{m.name}</td><td className="num">{inr(m.sales)}</td><td className="num">{inr(m.portal)}</td>
+                <td className={`num ${m.dir === "under" ? "" : ""}`}>{inr(m.portalMinusBook)}</td>
+                <td className="left small">{m.severity ? <b>{m.severity}</b> : null} {m.note}</td>
+              </tr>))}
+            </tbody>
           </table>
         </>
       )}
 
       {res.cancelled.length > 0 && (
-        <p className="g1-note"><b>Portal-cancelled IRNs:</b> {res.cancelled.join(", ")} — the JSON carries the BOOK copy of any of these still in the sales sheet; confirm with the client.</p>
+        <p className="g1-note"><b>Portal-cancelled IRNs:</b> {res.cancelled.join(", ")} — the JSON carries the BOOK copy of any of these still in the sales sheet; confirm with the client (C26 links this to Table 13).</p>
       )}
       {res.cdnr.length > 0 && (
         <p className="g1-note"><b>Credit/Debit notes (reduce Table 12):</b> {res.cdnr.map((c) => `${c.nt_num} (${c.ntty}, ${c.name}, ${inr(c.txbl)})`).join("; ")}</p>
       )}
       {r.missingInSales.length > 0 && (
-        <p className="g1-note bad"><b>e-Invoices missing from client book:</b> {r.missingInSales.join(", ")}</p>
+        <p className="g1-note bad"><b>Portal e-invoices genuinely MISSING from client book (add them):</b> {r.missingInSales.join(", ")}</p>
+      )}
+      {r.notEinvoiced && r.notEinvoiced.length > 0 && (
+        <p className="g1-note"><b>Registered B2B in books with NO IRN (e-invoicing omission):</b> {r.notEinvoiced.map((x) => `${x.inum} (${inr(x.txbl)})`).join(", ")}</p>
       )}
 
       {res.recon.nonRevButEinvoiced.length > 0 && (
@@ -267,13 +295,22 @@ async function buildClientExcel(res) {
     C17: "JSON no longer ties to the books — engine issue, re-run with fresh files.",
     C18: "JSON B2B − CDN no longer equals Table-12 hsn_b2b — engine issue, re-run with fresh files.",
     C20: "Fix the flagged document fields (GSTIN/date/POS/value/tax-split) in the Fix & Generate tab. JSON BLOCKED until fixed.",
+    C21: "Same supply e-invoiced twice on the portal. Cancel the duplicate IRN (or raise a credit note if past the cancellation window). Do NOT add it to the sales book.",
+    C22: "A taxable supply carries 0% tax. Confirm whether tax was actually charged — a genuine exempt/nil supply is fine; otherwise the invoice under-charges GST.",
+    C23a: "This HSN never appears on any e-invoice this month — verify the code is correct for the product.",
+    C23b: "This model uses a different HSN chapter from its sibling rows — likely a mistyped HSN. Correct it in the books.",
+    C24: "Invoice number does not match the dominant format (e.g. a dropped leading zero on the portal). Verify it is the same document, not a separate supply.",
+    C25: "Recipient GSTIN field holds non-GSTIN text or an invalid checksum. Confirm B2C vs a mistyped B2B GSTIN.",
+    C26: "Portal shows cancelled IRNs that Table 13 does not reflect. Confirm the cancellations and reconcile the Table-13 cancelled count.",
   }[id] || "Review and resolve with the client.");
-  const whereFor = (id) => (["C9"].includes(id) ? SH.canc : ["C13", "C14"].includes(id) ? SH.dev : ["C7", "C8", "C15", "C16"].includes(id) ? SH.recon : ["C10", "C11"].includes(id) ? SH.t13 : SH.t12);
+  const whereFor = (id) => (["C9", "C26"].includes(id) ? SH.canc : ["C13", "C14", "C21", "C22", "C24", "C25"].includes(id) ? SH.dev : ["C7", "C8", "C15", "C16"].includes(id) ? SH.recon : ["C10", "C11"].includes(id) ? SH.t13 : SH.t12);
+  // C21 (portal duplicates) and C22 (zero-tax) are CONFIRM-grade even though non-blocking — surface them high.
+  const highSev = new Set(["C21", "C22"]);
   const issues = [];
   for (const c of res.checks) {
     if (c.ok) continue;
     const blocker = res.blockingFails.includes(c);
-    issues.push({ sev: blocker ? "BLOCKER" : "REVIEW", area: c.id, issue: c.desc, detail: `Found: ${c.actual}`, where: whereFor(c.id), action: actionFor(c.id) });
+    issues.push({ sev: blocker ? "BLOCKER" : highSev.has(c.id) ? "CONFIRM" : "REVIEW", area: c.id, issue: c.desc, detail: `Found: ${c.actual}`, where: whereFor(c.id), action: actionFor(c.id) });
   }
   if ((res.cancelledDetail || []).length) {
     issues.push({ sev: "CONFIRM", area: "Cancelled", issue: `${res.cancelledDetail.length} invoice(s) in the sales sheet but IRN cancelled on the portal`, detail: `₹${f(cancTot)} — ${res.cancelledDetail.slice(0, 3).map((c) => `${c.inum} ${c.name}`).join("; ")}`, where: SH.canc, action: "Confirm with client: remove from GSTR-1 (sale not done) or it was re-billed under a new number." });
@@ -307,7 +344,7 @@ async function buildClientExcel(res) {
   });
   a.addRow([]);
   sectionTitle(a, "F", "WORKBOOK INDEX");
-  [[SH.summary, "Headline figures & tax split"], [SH.recon, "Sales sheet ↔ e-invoice reconciliation bridge"], [SH.t12, "Table 12 — full HSN/SAC summary (the books)"], [SH.t13, "Table 13 — documents issued"], [SH.canc, "Invoices cancelled on portal but in the books"], [SH.dev, "Per-invoice deviations (book vs portal)"], [SH.checks, "All 16 validation checks"]].forEach(([s, d], i) => {
+  [[SH.summary, "Headline figures & tax split"], [SH.recon, "Sales sheet ↔ e-invoice reconciliation bridge"], [SH.t12, "Table 12 — full HSN/SAC summary (the books)"], [SH.t13, "Table 13 — documents issued"], [SH.canc, "Invoices cancelled on portal but in the books"], [SH.dev, "Deviations, duplicates & direction (book vs portal)"], [SH.checks, `All ${res.checks.length} validation checks`]].forEach(([s, d], i) => {
     const r = a.addRow(["", "", { text: s, hyperlink: `#'${s}'!A1` }, d, "", ""]);
     r.getCell(3).font = { color: { argb: "FF0369A1" }, underline: true, bold: true };
     r.getCell(4).font = { color: { argb: "FF475569" } };
@@ -399,16 +436,28 @@ async function buildClientExcel(res) {
 
   // ===== Sheet 7: DEVIATIONS =====
   const dv = wb.addWorksheet(SH.dev, { views: [{ showGridLines: false }] });
-  dv.columns = [{ width: 16 }, { width: 40 }, { width: 18 }, { width: 18 }, { width: 18 }];
-  banner(dv, "E", "DEVIATIONS — client book vs portal e-invoice", "Confirm the correct figure with the client for each.");
-  sectionTitle(dv, "E", "Per-invoice value mismatches (C14)");
-  headerRow(dv, ["Invoice", "Recipient", "Sales book", "Portal", "Difference"]);
-  if (res.recon.valMismatch.length) res.recon.valMismatch.forEach((m, i) => { const r = dataRow(dv, [m.inum, m.name, m.sales, m.portal, m.diff], i, [3, 4, 5]); r.getCell(5).font = { bold: true, color: { argb: "FF991B1B" } }; });
-  else dv.addRow(["—", "No value mismatches.", "", "", ""]);
+  dv.columns = [{ width: 16 }, { width: 38 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 40 }];
+  banner(dv, "F", "DEVIATIONS — client book vs portal e-invoice", "Confirm the correct figure with the client for each.");
+  const dir = res.recon.direction || { underCount: 0, underAmt: 0, overCount: 0, overAmt: 0, netUnderReported: 0 };
+  const dRow = (label, amt, argb) => { const r = dv.addRow(["", label, amt, "", "", ""]); r.getCell(2).font = { bold: true, color: { argb: INK } }; r.getCell(3).numFmt = MONEY; r.getCell(3).font = { bold: true, color: { argb } }; [2, 3].forEach((c) => (r.getCell(c).fill = fill(LIGHT))); };
+  sectionTitle(dv, "F", "Direction summary");
+  dRow(`Understated (portal > book) — ${dir.underCount} invoice(s)`, dir.underAmt, "FF991B1B");
+  dRow(`Overstated (book > portal) — ${dir.overCount} invoice(s)`, dir.overAmt, "FF92400E");
+  dRow("Net under-reported vs portal", dir.netUnderReported, dir.netUnderReported > 1 ? "FF991B1B" : "FF166534");
   dv.addRow([]);
-  sectionTitle(dv, "E", "e-Invoices missing from the sales book (C13)");
-  if (res.recon.missingInSales.length) res.recon.missingInSales.forEach((n, i) => dataRow(dv, [n, "missing in sales sheet", "", "", ""], i));
-  else dv.addRow(["—", "None missing.", "", "", ""]);
+  sectionTitle(dv, "F", "Portal duplicate IRNs — do NOT add to the sales book (C21)");
+  headerRow(dv, ["Portal invoice", "Duplicate of (book)", "Taxable", "Portal date", "", "Action"]);
+  if ((res.duplicates || []).length) res.duplicates.forEach((x, i) => { const r = dataRow(dv, [x.portalNo, x.duplicateOf, x.taxable, x.portalDate, "", x.action], i, [3]); r.getCell(6).fill = fill(RED); r.getCell(6).alignment = { wrapText: true, vertical: "top" }; });
+  else dv.addRow(["—", "No portal duplicates.", "", "", "", ""]);
+  dv.addRow([]);
+  sectionTitle(dv, "F", "Matched-invoice value deviations (C14)");
+  headerRow(dv, ["Invoice", "Recipient", "Sales book", "Portal", "Portal − Book", "Finding"]);
+  if (res.recon.valMismatch.length) res.recon.valMismatch.forEach((m, i) => { const r = dataRow(dv, [m.inum, m.name, m.sales, m.portal, m.portalMinusBook, `${m.severity || ""} ${m.note || ""}`.trim()], i, [3, 4, 5]); r.getCell(5).font = { bold: true, color: { argb: m.dir === "under" ? "FF991B1B" : "FF92400E" } }; r.getCell(6).alignment = { wrapText: true, vertical: "top" }; });
+  else dv.addRow(["—", "No value mismatches.", "", "", "", ""]);
+  dv.addRow([]);
+  sectionTitle(dv, "F", "Portal e-invoices genuinely MISSING from the sales book — add them (C13)");
+  if (res.recon.missingInSales.length) res.recon.missingInSales.forEach((n, i) => dataRow(dv, [n, "missing in sales sheet", "", "", "", ""], i));
+  else dv.addRow(["—", "None missing.", "", "", "", ""]);
   dv.addRow([]);
   sectionTitle(dv, "E", "Tagged 'Non-Revenue' but e-invoiced — INCLUDED in GSTR-1");
   headerRow(dv, ["Invoice", "Recipient", "Portal taxable", "Client tag", ""]);
