@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/sungrow-gst-processor-2026/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GSTR-1 E-Invoice Bridge Skill — Sungrow GST Processor 2026</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #ffffff;
+        --ink: #1e293b;
+        --muted: #64748b;
+        --accent: #0e7490;
+        --accent-dark: #155e75;
+        --code-bg: #f1f5f9;
+        --border: #e2e8f0;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+      header {
+        background: var(--bg);
+        color: #fff;
+        padding: 28px 24px;
+      }
+      header .wrap { max-width: 860px; margin: 0 auto; }
+      header h1 { margin: 0 0 6px; font-size: 22px; }
+      header p { margin: 0; color: #cbd5e1; font-size: 14px; }
+      main { max-width: 860px; margin: -18px auto 32px; padding: 0 16px; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 22px 24px;
+        margin: 16px 0;
+        box-shadow: 0 4px 14px rgba(2, 6, 23, 0.18);
+      }
+      h2 { font-size: 17px; margin: 0 0 10px; color: var(--accent-dark); }
+      p { margin: 8px 0; }
+      ul { margin: 8px 0 8px 20px; padding: 0; }
+      li { margin: 4px 0; }
+      .download {
+        display: inline-block;
+        background: var(--accent);
+        color: #fff;
+        text-decoration: none;
+        font-weight: 600;
+        padding: 12px 22px;
+        border-radius: 8px;
+        margin: 10px 0 4px;
+      }
+      .download:hover { background: var(--accent-dark); }
+      .meta { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+      code {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 1px 6px;
+        font-size: 13px;
+      }
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .back { color: var(--muted); font-size: 14px; text-decoration: none; }
+      .back:hover { color: var(--accent); }
+      footer { max-width: 860px; margin: 0 auto 28px; padding: 0 16px; color: #94a3b8; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <h1>Sungrow GST Processor 2026</h1>
+        <p>GSTR-1 E-Invoice Bridge — reusable Codex skill</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Download the skill</h2>
+        <a class="download" href="gstr1-einvoice-bridge.zip" download>Download gstr1-einvoice-bridge.zip</a>
+        <p class="meta">gstr1-einvoice-bridge.zip · ~13 KB · updated 10/08/2026</p>
+      </section>
+
+      <section class="card">
+        <h2>What it does</h2>
+        <p>
+          Reconciles a client sales workbook against a GSTN e-invoice portal export and builds the
+          "Sales sheet → GSTR-1" bridge with an e-invoice issues register and a missing-IRN root-cause analysis.
+          One command produces a workbook with: Bridge (books → GSTR-1 tables and books-vs-portal cross-check),
+          E-Invoice Issues, Missing IRN, Matched invoices, Why missing IRN, and Read me.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>What's inside</h2>
+        <ul>
+          <li><code>SKILL.md</code> — skill instructions and workflow</li>
+          <li><code>scripts/gstr1_bridge.py</code> — deterministic bridge + issues + root-cause builder</li>
+          <li><code>references/input_spec.md</code> — input layouts, classification rules, pitfalls</li>
+          <li><code>agents/openai.yaml</code> — UI metadata</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Install &amp; use</h2>
+        <pre># Install (Codex discovers it automatically)
+unzip gstr1-einvoice-bridge.zip -d ~/.codex/skills/
+
+# Run
+python3 scripts/gstr1_bridge.py \
+  --books "GSTR-1 JULY 2026.xlsx" \
+  --portal "EINV_&lt;GSTIN&gt;_&lt;FY&gt;.xlsx" \
+  --output bridge_output.xlsx</pre>
+        <p>Requires Python 3 and <code>openpyxl</code>. Verified on the July 2026 run: 431 invoices, 297 issues,
+        bridge closes to ₹0.00 unexplained.</p>
+      </section>
+
+      <p><a class="back" href="index.html">← Back to the GST Processor app</a></p>
+    </main>
+
+    <footer>
+      Sungrow GST Processor 2026 · GSTR-1 E-Invoice Bridge skill page · updated 10/08/2026
+    </footer>
+  </body>
+</html>
