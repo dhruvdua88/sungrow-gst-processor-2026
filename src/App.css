@@ -116,6 +116,13 @@ body {
   box-shadow: 0 4px 12px rgba(14, 78, 140, 0.28);
 }
 
+a.mode-tab {
+  text-decoration: none;
+  display: inline-block;
+  box-sizing: border-box;
+  text-align: center;
+}
+
 .main {
   flex: 1;
   width: 100%;

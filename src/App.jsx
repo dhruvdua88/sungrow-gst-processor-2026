@@ -313,6 +313,15 @@ export default function App() {
             {label}
           </button>
         ))}
+        <a
+          className="mode-tab skill-tab"
+          href={`${import.meta.env.BASE_URL}gstr1-einvoice-bridge.html`}
+          target="_blank"
+          rel="noreferrer"
+          title="GSTR-1 E-Invoice Bridge skill — download page (opens in a new tab)"
+        >
+          GSTR-1 Bridge Skill ↗
+        </a>
       </nav>
 
       <main className="main">
