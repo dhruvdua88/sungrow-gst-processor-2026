@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:indas": "npm --prefix indas-bridge ci && npm --prefix indas-bridge run build",
+    "build:all": "vite build && npm --prefix indas-bridge ci && npm --prefix indas-bridge run build"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
