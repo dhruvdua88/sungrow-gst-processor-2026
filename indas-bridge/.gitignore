@@ -1,0 +1,9 @@
+node_modules
+dist
+*.local
+# Client workbooks must never be committed (public repository).
+*.xlsb
+*.xlsx
+*.xls
+*.xlsm
+*.csv
